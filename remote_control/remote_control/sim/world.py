@@ -22,6 +22,22 @@ for _ in range(120):
     shade = (shade[0], shade[1], min(shade[2], shade[1]))  # no red-dominant patches
     cv2.rectangle(_room, corner, (corner[0] + size[0], corner[1] + size[1]), shade, -1)
 
+SIM_MARKER_ID = 3
+SIM_QR_TEXT = 'picar-sim-qr'
+
+
+def _paste_white_framed(image, top_left, side):
+    tile = cv2.cvtColor(cv2.resize(image, (side, side), interpolation=cv2.INTER_NEAREST), cv2.COLOR_GRAY2BGR)
+    x, y = top_left
+    _room[y - 10:y + side + 10, x - 10:x + side + 10] = 255
+    _room[y:y + side, x:x + side] = tile
+
+
+if hasattr(cv2, 'aruco'):  # opencv-contrib; ArUco marker in view at the start position
+    _paste_white_framed(cv2.aruco.drawMarker(cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50), SIM_MARKER_ID, 120), (660, 500), 60)
+if hasattr(cv2, 'QRCodeEncoder'):
+    _paste_white_framed(cv2.QRCodeEncoder.create().encode(SIM_QR_TEXT), (860, 560), 90)
+
 
 def ball_position(at_time=None):
     t = time.time() if at_time is None else at_time

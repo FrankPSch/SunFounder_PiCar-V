@@ -24,6 +24,7 @@ urlpatterns = [
     url(r'^api/history$', api.history),
     url(r'^api/cmd$', api.command),
     url(r'^sim/stream$', api.sim_stream),
+    url(r'^media/(?P<name>[\w./-]+)$', api.media_file),
     url(r'^classic/$', views.home),
     url(r'^run/$', views.run),
     url(r'^cali/$', views.cali),

@@ -56,6 +56,19 @@ small, .muted { color: var(--muted); font-weight: 400; }
 .track-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .switch { display: flex; gap: 4px; align-items: center; }
 output { font-family: ui-monospace, Consolas, monospace; color: var(--accent); }
+details.group > summary { cursor: pointer; list-style: none; }
+details.group > summary h3 { display: inline; }
+details.group > summary::before { content: '▸ '; color: var(--muted); }
+details.group[open] > summary::before { content: '▾ '; }
+details.group > summary + * { margin-top: 8px; }
+.list { font-size: 12px; max-height: 140px; overflow: auto; display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.list a { color: var(--accent); }
+.events div { border-bottom: 1px solid var(--line); padding: 2px 0; }
+.num { width: 64px; background: var(--btn); border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+.list input[type=text] { width: 120px; background: var(--btn); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
+.meter { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+#mic-bar { height: 100%; width: 0; background: var(--ok); transition: width .2s; }
+button.recording { background: var(--bad); color: #fff; }
 
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "camera" "controls" "diagnosis"; height: auto; }

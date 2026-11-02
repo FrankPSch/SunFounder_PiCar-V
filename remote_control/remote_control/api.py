@@ -4,15 +4,16 @@ JSON API and the dashboard page.
   GET  /api/state             car + tracker + features + latest telemetry
   GET  /api/history?minutes=N telemetry history (columns + rows)
   POST /api/cmd               {"cmd": <name>, ...} -> runs one command, returns /api/state
+  GET  /media/<name>          download a photo/video/sound file from DATA_DIR/media
 '''
 import json
 import os
 import subprocess
 
-from django.http import HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render_to_response
 
-from . import features, telemetry
+from . import audio, events, features, media, rooms, telemetry
 from .car import car, SIM
 from .tracker import tracker
 
@@ -46,6 +47,8 @@ def state(request):
     return JsonResponse({
         'car': car.state(), 'tracker': tracker.describe(), 'features': features.describe(),
         'telemetry': telemetry.latest, 'stream_url': _stream_url(request),
+        'audio': audio.microphone.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
+        'events': events.recent(), 'settings': {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS},
     })
 
 
@@ -70,6 +73,14 @@ COMMANDS = {
     'feature':      lambda args: features.set_enabled(args['name'], args['on']),
     'track_color':  lambda args: tracker.set_color(args['name']),
     'track_teach':  lambda args: tracker.teach(),
+    'track_animal': lambda args: tracker.set_animal(args['name']),
+    'photo':        lambda args: media.snapshot(),
+    'record':       lambda args: media.start_recording() if args['on'] else media.stop_recording(),
+    'setting':      lambda args: events.update_setting(args['name'], args['value']),
+    'room_name':    lambda args: rooms.name_marker(args['id'], args.get('name', '')),
+    'room_goto':    lambda args: rooms.goto(args['name']),
+    'room_cancel':  lambda args: rooms.cancel(),
+    'treasure_next': lambda args: tracker._next_treasure(),
 }
 
 
@@ -80,6 +91,16 @@ def command(request):
     except (KeyError, ValueError, TypeError) as error:
         return HttpResponseBadRequest('bad command: %s' % error)
     return state(request)
+
+
+def media_file(request, name):
+    try:
+        response = FileResponse(open(media.safe_path(name), 'rb'))  # Django 2.0: no as_attachment yet
+    except FileNotFoundError:
+        raise Http404(name)
+    if not name.endswith('.jpg'):
+        response['Content-Disposition'] = 'attachment; filename="%s"' % os.path.basename(name)
+    return response
 
 
 def sim_stream(request):

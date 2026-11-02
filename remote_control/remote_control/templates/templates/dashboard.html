@@ -32,7 +32,11 @@
       <figure><figcaption>Wi-Fi dBm (1 h)</figcaption><canvas id="chart-wifi" height="60"></canvas></figure>
     </div>
     <details class="features" open>
-      <summary>Feature toggles</summary>
+      <summary>Events</summary>
+      <div id="events" class="list events"></div>
+    </details>
+    <details class="features">
+      <summary>All feature toggles</summary>
       <div id="features"></div>
     </details>
   </section>
@@ -86,16 +90,76 @@
       </div>
     </div>
 
-    <div class="group">
-      <h3>Ball tracking <small>T toggles</small></h3>
+    <details class="group" open>
+      <summary><h3>Camera follow <small>T toggles ball</small></h3></summary>
       <div class="track-row">
-        <label class="switch"><input type="checkbox" data-feature="ball_tracking"> follow ball</label>
-        <label class="switch"><input type="checkbox" data-feature="tracking_drive"> drive after it</label>
-        <select id="track-color"></select>
+        <label class="switch"><input type="checkbox" data-feature="ball_tracking"> ball</label>
+        <select id="track-color" title="ball colour"></select>
         <button id="teach" title="Hold the ball in the image centre, then click">teach colour</button>
       </div>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="face_tracking"> face</label>
+        <label class="switch"><input type="checkbox" data-feature="animal_tracking"> animal</label>
+        <select id="track-animal" title="animal / person"></select>
+        <label class="switch" title="Bull fight: drive after the target"><input type="checkbox" data-feature="tracking_drive"> drive after it</label>
+      </div>
       <div id="track-status" class="muted">off</div>
-    </div>
+    </details>
+
+    <details class="group">
+      <summary><h3>Vision extras</h3></summary>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="qr_reader"> QR reader</label>
+        <span id="qr-text" class="muted"></span>
+      </div>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="treasure_hunt"> treasure hunt</label>
+        <span id="treasure-status" class="muted"></span>
+        <button id="treasure-next">next colour</button>
+      </div>
+    </details>
+
+    <details class="group">
+      <summary><h3>Rooms <small>ArUco 4×4 markers</small></h3></summary>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="markers"> detect markers</label>
+        <label class="switch"><input type="checkbox" data-feature="room_navigation"> navigation (experimental)</label>
+      </div>
+      <div id="rooms-seen" class="list"></div>
+      <div id="rooms-goto" class="track-row"></div>
+      <div id="rooms-status" class="muted"></div>
+    </details>
+
+    <details class="group">
+      <summary><h3>Media</h3></summary>
+      <div class="track-row">
+        <button id="photo">📷 photo</button>
+        <button id="record">● record</button>
+        <label class="switch"><input type="checkbox" data-feature="record_audio"> with sound</label>
+      </div>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="timelapse"> timelapse every</label>
+        <input id="timelapse-seconds" type="number" min="2" max="3600" step="1" class="num"> s
+      </div>
+      <div id="media-status" class="muted"></div>
+      <div id="media-files" class="list"></div>
+    </details>
+
+    <details class="group">
+      <summary><h3>Microphone</h3></summary>
+      <div class="meter"><div id="mic-bar"></div></div>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="sound_level"> level</label>
+        <label class="switch"><input type="checkbox" data-feature="clap_stop"> double clap = STOP</label>
+        <label class="switch"><input type="checkbox" data-feature="noise_alarm"> noise alarm</label>
+      </div>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="stop_word"> "stop" word</label>
+        <label class="switch"><input type="checkbox" data-feature="voice_commands"> voice commands</label>
+        <label class="switch"><input type="checkbox" data-feature="voice_prompts"> voice prompts</label>
+      </div>
+      <div id="mic-status" class="muted"></div>
+    </details>
   </section>
 </main>
 <script>window.PICAR_SIM = {{ sim|yesno:"true,false" }};</script>

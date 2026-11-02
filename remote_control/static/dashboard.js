@@ -80,6 +80,19 @@ document.querySelectorAll('.stepper').forEach((stepper) => {
 document.querySelectorAll('[data-feature]').forEach((box) => box.addEventListener('change', () => send('feature', { name: box.dataset.feature, on: box.checked })));
 $('#track-color').addEventListener('change', (event) => { send('track_color', { name: event.target.value }); event.target.blur(); });
 $('#teach').addEventListener('click', () => send('track_teach'));
+$('#track-animal').addEventListener('change', (event) => { send('track_animal', { name: event.target.value }); event.target.blur(); });
+$('#treasure-next').addEventListener('click', () => send('treasure_next'));
+$('#photo').addEventListener('click', () => send('photo'));
+$('#record').addEventListener('click', () => send('record', { on: !(lastState && lastState.media.recording) }));
+$('#timelapse-seconds').addEventListener('change', (event) => { send('setting', { name: 'timelapse_seconds', value: +event.target.value }); event.target.blur(); });
+$('#rooms-seen').addEventListener('change', (event) => {
+  if (event.target.dataset.marker) send('room_name', { id: +event.target.dataset.marker, name: event.target.value });
+});
+$('#rooms-goto').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  if (button.dataset.room) send('room_goto', { name: button.dataset.room }); else send('room_cancel');
+});
 
 // ---------- keyboard (physical keys, so QWERTZ and QWERTY behave the same) ----------
 const KEY_HOLDS = {
@@ -105,7 +118,8 @@ function codeOf(event) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (event.target.tagName === 'SELECT' || event.ctrlKey || event.altKey || event.metaKey) return;
+  const typing = event.target.tagName === 'INPUT' && ['text', 'number'].includes(event.target.type);
+  if (typing || event.target.tagName === 'SELECT' || event.ctrlKey || event.altKey || event.metaKey) return;
   const code = codeOf(event);
   if (KEY_HOLDS[code]) { event.preventDefault(); if (!event.repeat) KEY_HOLDS[code]('key-' + code, event); }
   else if (KEY_PRESSES[code]) { event.preventDefault(); KEY_PRESSES[code](event); }
@@ -186,9 +200,15 @@ function render(state) {
   const select = $('#track-color');
   if (select.options.length !== tracker.colors.length) select.innerHTML = tracker.colors.map((c) => `<option>${c}</option>`).join('');
   setIfIdle(select, tracker.color);
-  $('#track-status').textContent = !tracker.enabled ? 'off' : tracker.error ? 'error: ' + tracker.error
-    : tracker.found ? `ball found · ${tracker.centred ? 'centred' : 'following'} · r ${tracker.radius_px}px · ${tracker.fps} fps` : `searching · ${tracker.fps} fps`;
+  const animalSelect = $('#track-animal');
+  if (animalSelect.options.length !== tracker.animals.length) animalSelect.innerHTML = tracker.animals.map((a) => `<option>${a}</option>`).join('');
+  setIfIdle(animalSelect, tracker.animal);
+  const detectorNote = Object.entries(tracker.detectors || {}).filter(([, s]) => s !== 'ok').map(([n, s]) => `${n}: ${s}`).join(' · ');
+  $('#track-status').textContent = !tracker.mode ? 'off' + (detectorNote ? ' · ' + detectorNote : '') : tracker.error ? 'error: ' + tracker.error
+    : (tracker.found ? `${tracker.mode}: ${tracker.target.label} · ${tracker.centred ? 'centred' : 'following'}` : `${tracker.mode}: searching`)
+      + ` · ${tracker.fps} fps` + (detectorNote ? ' · ' + detectorNote : '');
 
+  renderExtras(state);
   renderFeatures(state.features);
   renderTiles(Object.assign({}, t, { car }));
   $('#warnings').textContent = (t.warnings || []).join(' · ');
@@ -209,13 +229,65 @@ function drawOverlay(tracker) {
   ctx.moveTo(left + drawW / 2 - 10, top + drawH / 2); ctx.lineTo(left + drawW / 2 + 10, top + drawH / 2);
   ctx.moveTo(left + drawW / 2, top + drawH / 2 - 10); ctx.lineTo(left + drawW / 2, top + drawH / 2 + 10);
   ctx.stroke();
-  if (tracker.enabled && tracker.found) {
+  const target = tracker.found && tracker.target;
+  if (target) {
     ctx.strokeStyle = tracker.centred ? '#4caf7d' : '#e0a030';
     ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(left + tracker.x * drawW, top + tracker.y * drawH, Math.max(6, tracker.r * drawW), 0, 2 * Math.PI);
-    ctx.stroke();
+    const boxW = Math.max(12, target.w * drawW), boxH = Math.max(12, target.h * drawH);
+    const boxX = left + target.x * drawW - boxW / 2, boxY = top + target.y * drawH - boxH / 2;
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+    ctx.fillStyle = ctx.strokeStyle; ctx.font = '12px system-ui'; ctx.fillText(target.label, boxX, boxY - 4);
   }
+  for (const marker of tracker.markers || []) {
+    const size = marker.size * drawW;
+    ctx.strokeStyle = '#3fa7d6'; ctx.lineWidth = 2;
+    ctx.strokeRect(left + marker.x * drawW - size / 2, top + marker.y * drawH - size / 2, size, size);
+    ctx.fillStyle = '#3fa7d6'; ctx.font = '12px system-ui';
+    const roomName = lastState && lastState.rooms.names[String(marker.id)];
+    ctx.fillText(`#${marker.id}${roomName ? ' ' + roomName : ''}`, left + marker.x * drawW - size / 2, top + marker.y * drawH - size / 2 - 4);
+  }
+}
+
+// ---------- extras: vision, rooms, media, microphone, events ----------
+const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let roomsSignature = '';
+
+function renderExtras(state) {
+  const tracker = state.tracker, media = state.media, audio = state.audio, rooms = state.rooms;
+  $('#qr-text').textContent = tracker.qr ? `${tracker.qr.text} (${tracker.qr.time})` : '';
+  const treasure = tracker.treasure || {};
+  $('#treasure-status').textContent = treasure.color ? `find: ${treasure.color} · score ${treasure.score} · ${'●'.repeat(treasure.progress)}` : '';
+
+  const signature = JSON.stringify([Object.keys(rooms.seen), rooms.names]);
+  if (signature !== roomsSignature && !$('#rooms-seen').contains(document.activeElement)) {
+    roomsSignature = signature;
+    const ids = [...new Set([...Object.keys(rooms.seen), ...Object.keys(rooms.names)])].sort((a, b) => a - b);
+    $('#rooms-seen').innerHTML = ids.length ? ids.map((id) => `<label>marker #${id} ${rooms.seen[id] != null ? '👁' : ''}
+      <input type="text" data-marker="${id}" placeholder="room name" value="${escapeHtml(rooms.names[id] || '')}"></label>`).join('')
+      : '<span class="muted">no markers seen yet - switch on "detect markers"</span>';
+    $('#rooms-goto').innerHTML = rooms.rooms.map((room) => `<button data-room="${escapeHtml(room)}">go to ${escapeHtml(room)}</button>`).join('')
+      + (rooms.rooms.length ? '<button>cancel</button>' : '');
+  }
+  const nav = rooms.nav;
+  $('#rooms-status').textContent = `current: ${rooms.current.room || 'unknown'}` + (nav.state !== 'idle' ? ` · nav ${nav.state}: ${nav.message || ''}` : '')
+    + (Object.keys(rooms.transitions).length ? ' · seen paths: ' + Object.entries(rooms.transitions).map(([k, n]) => `${k} (${n}×)`).join(', ') : '');
+
+  const record = $('#record');
+  record.textContent = media.recording ? `■ stop (${media.recording.seconds} s, ${media.recording.mb} MB)` : '● record';
+  record.classList.toggle('recording', !!media.recording);
+  setIfIdle($('#timelapse-seconds'), media.timelapse_seconds);
+  $('#media-status').textContent = `${media.files.length} recent files`;
+  $('#media-files').innerHTML = media.files.slice(0, 12).map((f) => `<a href="/media/${encodeURI(f.name)}" target="_blank">${escapeHtml(f.name)}</a>`
+    + ` <small>${(f.bytes / 1e6).toFixed(2)} MB</small>`).join('');
+
+  const level = audio.level_dbfs;
+  $('#mic-bar').style.width = level == null ? '0' : Math.max(0, Math.min(100, (level + 70) / 70 * 100)) + '%';
+  $('#mic-status').textContent = (audio.running ? `listening · ${level} dBFS` : 'off')
+    + (audio.heard ? ` · heard "${audio.heard}" ${audio.heard_time}` : '') + ` · claps ${audio.claps} · alarms ${audio.alarms}`
+    + (audio.vosk_model ? '' : ' · vosk model missing') + (audio.error ? ' · ' + audio.error : '');
+
+  $('#events').innerHTML = state.events.slice().reverse().map((e) => `<div><small>${e.time}</small> <b>${e.source}</b> ${escapeHtml(e.text)}</div>`).join('')
+    || '<span class="muted">no events yet</span>';
 }
 
 // ---------- charts ----------
