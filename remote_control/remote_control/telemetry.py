@@ -114,8 +114,10 @@ def read_services():
 
 
 def read_git():
-    # The service runs as root but the repo belongs to pi; safe.directory avoids git's "dubious ownership" refusal.
-    git = ['git', '-c', 'safe.directory=' + REPO_DIR, '-C', REPO_DIR]
+    # The service runs as root but the repo belongs to pi. Git refuses that ("dubious ownership"), and Bullseye's
+    # git 2.30 ignores `-c safe.directory` without a HOME, so run git as the repo owner instead.
+    as_owner = ['runuser', '-u', 'pi', '--'] if hasattr(os, 'geteuid') and os.geteuid() == 0 else []
+    git = as_owner + ['git', '-C', REPO_DIR]
     commit = _run(git + ['log', '-1', '--format=%h %cI %s'])
     branch = _run(git + ['rev-parse', '--abbrev-ref', 'HEAD'])
     dirty = _run(git + ['status', '--porcelain'])
