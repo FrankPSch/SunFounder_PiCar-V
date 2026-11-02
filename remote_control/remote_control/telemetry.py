@@ -114,9 +114,11 @@ def read_services():
 
 
 def read_git():
-    commit = _run(['git', '-C', REPO_DIR, 'log', '-1', '--format=%h %cI %s'])
-    branch = _run(['git', '-C', REPO_DIR, 'rev-parse', '--abbrev-ref', 'HEAD'])
-    dirty = _run(['git', '-C', REPO_DIR, 'status', '--porcelain'])
+    # The service runs as root but the repo belongs to pi; safe.directory avoids git's "dubious ownership" refusal.
+    git = ['git', '-c', 'safe.directory=' + REPO_DIR, '-C', REPO_DIR]
+    commit = _run(git + ['log', '-1', '--format=%h %cI %s'])
+    branch = _run(git + ['rev-parse', '--abbrev-ref', 'HEAD'])
+    dirty = _run(git + ['status', '--porcelain'])
     return {'commit': commit, 'branch': branch, 'dirty': bool(dirty)} if commit else None
 
 
