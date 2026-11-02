@@ -1,0 +1,104 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PiCar Control</title>
+  <link rel="icon" href="{% static "favicon.ico" %}">
+  <link rel="stylesheet" href="{% static "dashboard.css" %}?v={{ asset_version }}">
+</head>
+<body>
+<header class="topbar">
+  <strong>PiCar-V</strong>
+  <span id="conn" class="pill">connecting…</span>
+  <span id="warnings" class="warnings"></span>
+  <a class="classic" href="/classic/">classic page</a>
+</header>
+
+<main class="layout">
+  <section class="camera panel">
+    <div class="video-wrap">
+      <img id="video" alt="camera stream">
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="camera-info" id="camera-info">pan 0 · tilt 0 · step 1 tick</div>
+  </section>
+
+  <section class="diagnosis panel">
+    <h2>Diagnosis</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="charts">
+      <figure><figcaption>CPU °C (1 h)</figcaption><canvas id="chart-temp" height="60"></canvas></figure>
+      <figure><figcaption>Wi-Fi dBm (1 h)</figcaption><canvas id="chart-wifi" height="60"></canvas></figure>
+    </div>
+    <details class="features" open>
+      <summary>Feature toggles</summary>
+      <div id="features"></div>
+    </details>
+  </section>
+
+  <section class="controls panel">
+    <button id="stop" class="stop" title="Space">STOP</button>
+
+    <div class="group">
+      <h3>Drive <small>W/S hold · A/D full lock</small></h3>
+      <div class="pad">
+        <span></span><button data-drive="1" title="W">▲</button><span></span>
+        <button data-hold="-1" title="A">◀</button><button data-ready title="centre all">●</button><button data-hold="1" title="D">▶</button>
+        <span></span><button data-drive="-1" title="S">▼</button><span></span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Speed <output id="speed-val">0</output> <small>R/F ±1 · Shift ±10</small></h3>
+      <div class="stepper" data-cmd="speed">
+        <button data-delta="-10">−10</button><button data-delta="-1">−1</button>
+        <input id="speed" type="range" min="0" max="100" step="1">
+        <button data-delta="1">+1</button><button data-delta="10">+10</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Steering <output id="steer-val">90</output>° <small>Q/E ±1 · Shift ±10</small></h3>
+      <div class="stepper" data-cmd="steer">
+        <button data-delta="-10">−10</button><button data-delta="-1">−1</button>
+        <input id="steer" type="range" min="45" max="135" step="1">
+        <button data-delta="1">+1</button><button data-delta="10">+10</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Camera <small>arrows · Shift = 10× step · C centre</small></h3>
+      <div class="cam-row">
+        <div class="pad">
+          <span></span><button data-cam="0,1" title="↑">▲</button><span></span>
+          <button data-cam="1,0" title="←">◀</button><button data-cam-center title="C">●</button><button data-cam="-1,0" title="→">▶</button>
+          <span></span><button data-cam="0,-1" title="↓">▼</button><span></span>
+        </div>
+        <div class="step-box">
+          <div>Step <output id="step-val">1</output> tick<span id="step-deg"></span></div>
+          <div class="stepper" data-cmd="cam_step">
+            <button data-delta="-10" title="Shift+,">−10</button><button data-delta="-1" title=",">−1</button>
+            <button data-delta="1" title=".">+1</button><button data-delta="10" title="Shift+.">+10</button>
+          </div>
+          <small>Shift-click an arrow = 10× step</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Ball tracking <small>T toggles</small></h3>
+      <div class="track-row">
+        <label class="switch"><input type="checkbox" data-feature="ball_tracking"> follow ball</label>
+        <label class="switch"><input type="checkbox" data-feature="tracking_drive"> drive after it</label>
+        <select id="track-color"></select>
+        <button id="teach" title="Hold the ball in the image centre, then click">teach colour</button>
+      </div>
+      <div id="track-status" class="muted">off</div>
+    </div>
+  </section>
+</main>
+<script>window.PICAR_SIM = {{ sim|yesno:"true,false" }};</script>
+<script src="{% static "dashboard.js" %}?v={{ asset_version }}"></script>
+</body>
+</html>

@@ -78,7 +78,8 @@ WSGI_APPLICATION = 'remote_control.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        # Outside the repo so the running car never dirties the git work tree.
+        'NAME': os.path.join(os.environ.get('PICAR_DATA', '/home/pi/picar-data'), 'db.sqlite3'),
     }
 }
 

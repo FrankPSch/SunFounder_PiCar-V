@@ -1,0 +1,8 @@
+[Unit]
+Description=PiCar auto-update: pull the release branch, restart, roll back if unhealthy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/SunFounder_PiCar-V/tools/picar-update.sh release

@@ -11,24 +11,16 @@
 '''
 
 from django.shortcuts import render_to_response
-from .driver import camera, stream
-from picar import back_wheels, front_wheels
+from .driver import stream
 from django.http import HttpResponse
-import picar
+# Hardware is owned by car.py (shared with the new dashboard); calibration lives in DATA_DIR/calibration.
+from .car import fw, bw, cam, SIM
 
-picar.setup()
-db_file = "/home/pi/SunFounder_PiCar-V/remote_control/remote_control/driver/config"
-fw = front_wheels.Front_Wheels(debug=False, db=db_file)
-bw = back_wheels.Back_Wheels(debug=False, db=db_file)
-cam = camera.Camera(debug=False, db=db_file)
-cam.ready()
-bw.ready()
-fw.ready()
- 
 SPEED = 60
 bw_status = 0
 
-print(stream.start())
+if not SIM:
+	print(stream.start())
 
 def home(request):
 	return render_to_response("base.html")

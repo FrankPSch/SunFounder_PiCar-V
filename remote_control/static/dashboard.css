@@ -1,0 +1,64 @@
+/* Layout: camera left (wide), diagnosis top right, controls bottom right; stacks on phones. */
+:root {
+  --bg: #11161a; --panel: #1a2228; --line: #2c3740; --fg: #e3eaee; --muted: #8b9aa5;
+  --accent: #3fa7d6; --ok: #4caf7d; --warn: #e0a030; --bad: #e0524a; --btn: #26323a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, select, input { font: inherit; color: inherit; }
+button { background: var(--btn); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; touch-action: none; user-select: none; }
+button:hover { border-color: var(--accent); }
+button.active { background: var(--accent); color: #fff; }
+select { background: var(--btn); border: 1px solid var(--line); border-radius: 6px; padding: 5px; }
+h2, h3 { margin: 0 0 8px; font-weight: 600; }
+h2 { font-size: 15px; }
+h3 { font-size: 13px; }
+small, .muted { color: var(--muted); font-weight: 400; }
+
+.topbar { display: flex; gap: 12px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.pill { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--btn); }
+.pill.ok { background: var(--ok); color: #fff; }
+.pill.bad { background: var(--bad); color: #fff; }
+.warnings { color: var(--warn); font-weight: 600; flex: 1; }
+.classic { color: var(--muted); font-size: 12px; }
+
+.layout { display: grid; gap: 12px; padding: 12px; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); grid-template-areas: "camera diagnosis" "camera controls"; height: calc(100vh - 42px); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; overflow: auto; }
+.camera { grid-area: camera; display: flex; flex-direction: column; gap: 8px; }
+.diagnosis { grid-area: diagnosis; }
+.controls { grid-area: controls; display: flex; flex-direction: column; gap: 12px; }
+
+.video-wrap { position: relative; flex: 1; min-height: 200px; background: #000; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+#video { width: 100%; height: 100%; object-fit: contain; display: block; }
+#overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.camera-info { font-family: ui-monospace, Consolas, monospace; color: var(--muted); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.tile { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.tile .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.tile.warn { border-color: var(--warn); } .tile.bad { border-color: var(--bad); } .tile.good .v { color: var(--ok); }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.charts figure { margin: 0; } .charts canvas { width: 100%; height: 60px; background: var(--bg); border-radius: 4px; }
+.charts figcaption { font-size: 11px; color: var(--muted); }
+.features summary { cursor: pointer; color: var(--muted); }
+.feature-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+
+.stop { background: var(--bad); color: #fff; font-size: 18px; font-weight: 700; padding: 10px; border: 0; }
+.group { border-top: 1px solid var(--line); padding-top: 8px; }
+.pad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 40px); gap: 4px; }
+.pad button { padding: 0; font-size: 16px; }
+.stepper { display: flex; gap: 4px; align-items: center; }
+.stepper input[type=range] { flex: 1; min-width: 60px; accent-color: var(--accent); }
+.cam-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.step-box { display: flex; flex-direction: column; gap: 4px; }
+.track-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.switch { display: flex; gap: 4px; align-items: center; }
+output { font-family: ui-monospace, Consolas, monospace; color: var(--accent); }
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "camera" "controls" "diagnosis"; height: auto; }
+  .video-wrap { min-height: 0; aspect-ratio: 4 / 3; flex: none; }
+  .warnings { flex-basis: 100%; order: 9; }
+}

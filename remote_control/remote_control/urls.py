@@ -15,11 +15,16 @@ Including another URLconf
 """
 from django.conf.urls import url
 from django.contrib import admin
-from . import views, settings
+from . import views, settings, api
 
 urlpatterns = [
     url(r'^admin/', admin.site.urls),
-    url(r'^$', views.home),
+    url(r'^$', api.dashboard),
+    url(r'^api/state$', api.state),
+    url(r'^api/history$', api.history),
+    url(r'^api/cmd$', api.command),
+    url(r'^sim/stream$', api.sim_stream),
+    url(r'^classic/$', views.home),
     url(r'^run/$', views.run),
     url(r'^cali/$', views.cali),
     url(r'^connection_test/$', views.connection_test),

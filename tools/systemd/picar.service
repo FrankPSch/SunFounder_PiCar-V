@@ -1,0 +1,14 @@
+[Unit]
+Description=SunFounder PiCar-V remote control server (Django, port 8000)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/pi/SunFounder_PiCar-V/remote_control
+ExecStart=/usr/bin/python3 manage.py runserver --noreload 0.0.0.0:8000
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
