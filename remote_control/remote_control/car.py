@@ -61,7 +61,9 @@ class Car(object):
         self.steer_hold = 0
         self.pan_ticks = 0
         self.tilt_ticks = 0
-        self.cam_step = 1
+        # Measured on the car (tools/cam_step_check.py): the pan servo's dead band swallows single ticks
+        # (moves on every 2nd one); 2 ticks move it reliably by ~0.8 deg. 1 stays selectable.
+        self.cam_step = 2
         self.last_drive_command = 0.0
         self.watchdog_stops = 0
         self.last_event = 'started'
