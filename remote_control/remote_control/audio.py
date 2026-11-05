@@ -24,6 +24,7 @@ from .car import car
 SAMPLE_RATE = 16000
 CHUNK_BYTES = SAMPLE_RATE // 10 * 2
 DEFAULT_MIC_DEVICE = 'plughw:CARD=Device,DEV=0'
+MIC_MIXER = ['amixer', '-q', '-c', 'Device', 'sset', 'Mic', '100%']  # capture volume boots at 0 % (peak 55 of 32767 measured), 100 % = +23.8 dB
 VOSK_MODEL_DIR = os.path.join(features.DATA_DIR, 'models', 'vosk-model-small-en-us-0.15')
 
 CLAP_PEAK = 20000           # of 32767
@@ -105,6 +106,10 @@ class Microphone(object):
                 time.sleep(0.5)
                 continue
             device = events.settings().get('mic_device', DEFAULT_MIC_DEVICE)
+            try:
+                subprocess.run(MIC_MIXER, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass  # no amixer (simulation)
             command = ['arecord', '-q', '-D', device, '-f', 'S16_LE', '-r', str(SAMPLE_RATE), '-c', '1', '-t', 'raw']
             try:
                 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
