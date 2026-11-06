@@ -2,11 +2,12 @@
 Event log shown on the dashboard, plus optional phone push and voice prompts.
 - Push (feature push_notifications): POST to https://ntfy.sh/<topic>. Nothing is sent until the owner
   puts {"ntfy_topic": "..."} into DATA_DIR/settings.json.
-- Voice prompts (feature voice_prompts): espeak-ng on the Pi's audio output (needs a speaker).
+- Voice prompts (feature voice_prompts): espeak-ng on the first USB speaker (e.g. Jabra), else the Pi's default output.
 '''
 import collections
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -17,6 +18,9 @@ from . import features
 SETTINGS_FILE = os.path.join(features.DATA_DIR, 'settings.json')
 log = collections.deque(maxlen=200)
 _speech_lock = threading.Lock()
+speaking = threading.Event()
+INTERNAL_AUDIO_CARDS = ('Headphones', 'vc4hdmi')
+PROMPT_ECHO_S = 0.5
 
 
 def settings():
@@ -65,11 +69,28 @@ def _push(text):
 
 def _say(text):
     with _speech_lock:
+        speaking.set()
         try:
-            subprocess.run(['espeak-ng', '-v', 'en', '-s', '150', text], timeout=15,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            speaker = audio_device('aplay')
+            voice = subprocess.run(['espeak-ng', '-v', 'en', '-s', '150', '--stdout', text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
+            subprocess.run(['aplay', '-q'] + (['-D', speaker] if speaker else []), input=voice.stdout, stderr=subprocess.DEVNULL, timeout=15)
+            time.sleep(PROMPT_ECHO_S)
         except (OSError, subprocess.SubprocessError) as error:
             print('event: voice prompt failed: %s' % error)
+        finally:
+            speaking.clear()
+
+
+def audio_device(alsa_list_tool):
+    '''First USB audio device: alsa_list_tool 'arecord' = microphone, 'aplay' = speaker. None if there is none.'''
+    try:
+        listing = subprocess.run([alsa_list_tool, '-l'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for card, device in re.findall(r'^card \d+: (\w+) \[.*\], device (\d+):', listing, re.MULTILINE):
+        if card not in INTERNAL_AUDIO_CARDS:
+            return 'plughw:CARD=%s,DEV=%s' % (card, device)
+    return None
 
 
 def recent(count=40):

@@ -4,13 +4,14 @@ Microphone features. The USB mic can be opened by one process only, so one captu
   sound_level  - RMS level in dBFS for the dashboard
   clap_stop    - two sharp peaks 0.15-0.8 s apart stop the motors
   noise_alarm  - level above NOISE_DBFS for 0.3 s -> photo + event (+ push)
-  stop_word    - Vosk keyword "stop"/"halt" stops the motors (acts on partial results, fast)
-  voice_commands - Vosk with a small fixed grammar (VOICE_COMMANDS)
+  stop_word    - Vosk keywords (STOP_WORDS, English + German) stop the motors (act on partial results, fast)
+  voice_commands - Vosk with small fixed word lists (VOICE_PHRASES); one recogniser per installed language
   record_audio - writes the chunks to a .wav while a video records
 The capture runs only while at least one of these is on.
 '''
 import audioop
 import collections
+import concurrent.futures
 import json
 import math
 import os
@@ -24,9 +25,9 @@ from .car import car
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = SAMPLE_RATE // 10 * 2
-DEFAULT_MIC_DEVICE = 'plughw:CARD=Device,DEV=0'
-MIC_MIXER = ['amixer', '-q', '-c', 'Device', 'sset', 'Mic', '100%']  # capture volume boots at 0 % (peak 55 of 32767 measured), 100 % = +23.8 dB
-VOSK_MODEL_DIR = os.path.join(features.DATA_DIR, 'models', 'vosk-model-small-en-us-0.15')
+OLD_MIC_MIXER = ['amixer', '-q', '-c', 'Device', 'sset', 'Mic', '100%']  # old USB mic: capture volume boots at 0 % (peak 55 of 32767 measured)
+SPEECH_MODELS = {language: os.path.join(features.DATA_DIR, 'models', folder)
+                 for language, folder in (('en', 'vosk-model-small-en-us-0.15'), ('de', 'vosk-model-small-de-0.15'))}
 
 CLAP_PEAK = 20000           # of 32767
 CLAP_QUIET_DBFS = -35       # level before a clap must be below this
@@ -34,12 +35,13 @@ CLAP_GAP_S = (0.15, 0.8)
 NOISE_DBFS = -18
 NOISE_CHUNKS = 3
 NOISE_COOLDOWN_S = 30
-STOP_WORDS = ('stop', 'halt')
+STOP_WORDS = {'en': ('stop', 'halt'), 'de': ('stopp', 'halt', 'anhalten')}
 # A grammar-limited recogniser maps room noise onto its nearest word ("halt" twice a minute at -63 dBFS),
 # so a word only counts when it was loud enough and the recogniser is sure. Rejected words: status['rejected'].
 MIN_SPEECH_DBFS = -45       # loudest chunk of the last RECENT_CHUNKS must reach this
 RECENT_CHUNKS = 20          # 2 s
 MIN_WORD_CONF = 0.8
+REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same word
 AUDIO_FEATURES = ('sound_level', 'clap_stop', 'noise_alarm', 'stop_word', 'voice_commands')
 
 
@@ -64,7 +66,7 @@ def _media(action):
 
 
 VOICE_COMMANDS = {
-    'forward': lambda: _drive_burst(1), 'go': lambda: _drive_burst(1), 'back': lambda: _drive_burst(-1),
+    'forward': lambda: _drive_burst(1), 'back': lambda: _drive_burst(-1),
     'left': lambda: car.set_steer(car.steer_angle - 20), 'right': lambda: car.set_steer(car.steer_angle + 20),
     'straight': lambda: car.set_steer(90),
     'faster': lambda: car.set_speed(car.speed + 10), 'slower': lambda: car.set_speed(car.speed - 10),
@@ -77,14 +79,36 @@ VOICE_COMMANDS = {
     'treasure hunt': lambda: features.set_enabled('treasure_hunt', True),
 }
 
+# Spoken phrase -> command. Every word was checked against the model's vocabulary (a missing word is silently dropped).
+VOICE_PHRASES = {
+    'en': {'forward': 'forward', 'forwards': 'forward', 'go': 'forward',
+           'back': 'back', 'backward': 'back', 'backwards': 'back', 'reverse': 'back',
+           'left': 'left', 'right': 'right', 'straight': 'straight', 'faster': 'faster', 'slower': 'slower',
+           'camera left': 'camera left', 'camera right': 'camera right', 'camera up': 'camera up', 'camera down': 'camera down',
+           'center': 'center', 'centre': 'center', 'ready': 'ready', 'photo': 'photo', 'picture': 'photo',
+           'record': 'record', 'stop recording': 'stop recording',
+           'follow ball': 'follow ball', 'follow face': 'follow face', 'treasure hunt': 'treasure hunt'},
+    'de': {'vorwärts': 'forward', 'los': 'forward', 'rückwärts': 'back', 'zurück': 'back',
+           'links': 'left', 'rechts': 'right', 'geradeaus': 'straight', 'schneller': 'faster', 'langsamer': 'slower',
+           'kamera links': 'camera left', 'kamera rechts': 'camera right', 'kamera hoch': 'camera up', 'kamera runter': 'camera down',
+           'mitte': 'center', 'bereit': 'ready', 'foto': 'photo', 'bild': 'photo',
+           'aufnahme': 'record', 'aufnahme stopp': 'stop recording',
+           'folge ball': 'follow ball', 'folge gesicht': 'follow face', 'schatzsuche': 'treasure hunt'},
+}
+for _phrases in VOICE_PHRASES.values():
+    assert set(_phrases.values()) == set(VOICE_COMMANDS), 'phrase list out of step with VOICE_COMMANDS'
+assert set(VOICE_PHRASES) == set(STOP_WORDS) == set(SPEECH_MODELS)
+
 
 class Microphone(object):
     def __init__(self):
         self.status = {'running': False, 'level_dbfs': None, 'error': None, 'heard': None, 'heard_time': None,
-                       'claps': 0, 'alarms': 0, 'rejected': None, 'rejected_count': 0}
+                       'claps': 0, 'alarms': 0, 'rejected': None, 'rejected_count': 0, 'speech_load': None, 'device': None}
         self._wav = None
         self._wav_lock = threading.Lock()
-        self._vosk_model = None
+        self._vosk_models = {}
+        self._speech_pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(SPEECH_MODELS))
+        self._last_command = (None, 0.0)
         threading.Thread(target=self._loop, name='microphone', daemon=True).start()
 
     def wanted(self):
@@ -111,11 +135,14 @@ class Microphone(object):
                 self.status.update(running=False, level_dbfs=None)
                 time.sleep(0.5)
                 continue
-            device = events.settings().get('mic_device', DEFAULT_MIC_DEVICE)
-            try:
-                subprocess.run(MIC_MIXER, stderr=subprocess.DEVNULL)
-            except OSError:
-                pass  # no amixer (simulation)
+            device = events.settings().get('mic_device') or events.audio_device('arecord')
+            self.status['device'] = device
+            if device is None:
+                self.status.update(running=False, error='no microphone found')
+                time.sleep(5)
+                continue
+            if 'CARD=Device' in device:
+                subprocess.run(OLD_MIC_MIXER, stderr=subprocess.DEVNULL)
             command = ['arecord', '-q', '-D', device, '-f', 'S16_LE', '-r', str(SAMPLE_RATE), '-c', '1', '-t', 'raw']
             try:
                 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -133,7 +160,7 @@ class Microphone(object):
             time.sleep(1)
 
     def _consume(self, process):
-        recognizer, grammar_key = None, None
+        recognizers, grammar_key = [], None
         quiet_level, last_clap, loud_chunks, last_alarm = -90.0, 0.0, 0, 0.0
         recent_levels = collections.deque(maxlen=RECENT_CHUNKS)
         while self.wanted():
@@ -169,9 +196,11 @@ class Microphone(object):
 
             wanted_grammar = 'commands' if features.enabled('voice_commands') else ('stop' if features.enabled('stop_word') else None)
             if wanted_grammar != grammar_key:
-                recognizer, grammar_key = self._make_recognizer(wanted_grammar), wanted_grammar
-            if recognizer:
-                self._recognize(recognizer, chunk, max(recent_levels))
+                recognizers, grammar_key = self._make_recognizers(wanted_grammar), wanted_grammar
+            if recognizers:
+                peak = max(recent_levels)
+                list(self._speech_pool.map(lambda item: self._recognize(item[0], item[1], chunk, peak), recognizers))
+                self.status['speech_load'] = round((time.time() - now) / (CHUNK_BYTES / 2.0 / SAMPLE_RATE), 2)
 
     def _noise_alarm(self, level):
         from . import media
@@ -182,52 +211,69 @@ class Microphone(object):
         events.add('audio', 'noise alarm %.0f dBFS (%s)' % (level, name), push=True)
 
     # ---- Vosk ----
-    def _make_recognizer(self, grammar_key):
+    def _make_recognizers(self, grammar_key):
         if grammar_key is None:
-            return None
+            return []
+        recognizers = []
         try:
             import vosk
-            if self._vosk_model is None:
-                vosk.SetLogLevel(-1)
-                self._vosk_model = vosk.Model(VOSK_MODEL_DIR)
+            vosk.SetLogLevel(-1)
+            for language, model_dir in SPEECH_MODELS.items():
+                if not os.path.isdir(model_dir):
+                    continue
+                if language not in self._vosk_models:
+                    self._vosk_models[language] = vosk.Model(model_dir)
+                phrases = list(STOP_WORDS[language]) + (sorted(VOICE_PHRASES[language]) if grammar_key == 'commands' else [])
+                # ensure_ascii=False: an escaped umlaut is not found in the vocabulary and the word is silently dropped
+                recognizer = vosk.KaldiRecognizer(self._vosk_models[language], SAMPLE_RATE, json.dumps(phrases + ['[unk]'], ensure_ascii=False))
+                recognizer.SetWords(True)
+                recognizers.append((language, recognizer))
         except Exception as error:
             self.status['error'] = 'vosk not ready (%s) - run tools/install_extras.sh' % error
-            return None
-        phrases = list(STOP_WORDS) + (sorted(VOICE_COMMANDS) if grammar_key == 'commands' else [])
-        recognizer = vosk.KaldiRecognizer(self._vosk_model, SAMPLE_RATE, json.dumps(phrases + ['[unk]']))
-        recognizer.SetWords(True)
-        return recognizer
+            return []
+        if not recognizers:
+            self.status['error'] = 'no speech model - run tools/install_extras.sh'
+        return recognizers
 
-    def _recognize(self, recognizer, chunk, recent_peak_dbfs):
+    def _recognize(self, language, recognizer, chunk, recent_peak_dbfs):
+        if events.speaking.is_set():  # the car's own voice prompt must not trigger a command
+            recognizer.Reset()
+            return
         if recognizer.AcceptWaveform(chunk):
-            result = json.loads(recognizer.Result())
-            text = result.get('text', '')
-            if text and text != '[unk]':
-                confidence = min((word.get('conf', 0) for word in result.get('result', [])), default=0)
+            # "[unk]" stands for speech outside the list: "[unk] links" still means "links"
+            words = [word for word in json.loads(recognizer.Result()).get('result', []) if word['word'] != '[unk]']
+            if words:
+                text = ' '.join(word['word'] for word in words)
+                confidence = min(word.get('conf', 0) for word in words)
                 if recent_peak_dbfs >= MIN_SPEECH_DBFS and confidence >= MIN_WORD_CONF:
-                    self._heard(text)
+                    self._heard(language, text)
                 else:
                     self.status['rejected'] = '%s %s conf %.2f peak %.0f dBFS' % (time.strftime('%H:%M:%S'), text, confidence, recent_peak_dbfs)
                     self.status['rejected_count'] += 1
         else:
             partial = json.loads(recognizer.PartialResult()).get('partial', '')
-            if any(word in partial.split() for word in STOP_WORDS) and car.drive_direction and recent_peak_dbfs >= MIN_SPEECH_DBFS:
+            if any(word in partial.split() for word in STOP_WORDS[language]) and car.drive_direction and recent_peak_dbfs >= MIN_SPEECH_DBFS:
                 car.stop('voice stop')
-                events.add('audio', 'heard "stop" -> STOP')
+                events.add('audio', 'heard "%s" -> STOP' % partial)
 
-    def _heard(self, text):
+    def _heard(self, language, text):
         self.status.update(heard=text, heard_time=time.strftime('%H:%M:%S'))
-        if any(word in text.split() for word in STOP_WORDS) and 'recording' not in text:
+        command = VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') else None
+        if command:
+            now = time.time()
+            if command == self._last_command[0] and now - self._last_command[1] < REPEAT_IGNORE_S:
+                return
+            self._last_command = (command, now)
+            VOICE_COMMANDS[command]()
+            events.add('audio', 'voice command: %s -> %s' % (text, command), say=command)
+        elif any(word in text.split() for word in STOP_WORDS[language]):
             car.stop('voice stop')
             events.add('audio', 'heard "%s" -> STOP' % text)
-            return
-        action = VOICE_COMMANDS.get(text) if features.enabled('voice_commands') else None
-        if action:
-            action()
-            events.add('audio', 'voice command: ' + text, say=text)
 
     def describe(self):
-        return dict(self.status, vosk_model=os.path.isdir(VOSK_MODEL_DIR), commands=sorted(VOICE_COMMANDS))
+        return dict(self.status, vosk_model=os.path.isdir(SPEECH_MODELS['en']),
+                    languages=[language for language, model_dir in SPEECH_MODELS.items() if os.path.isdir(model_dir)],
+                    phrases={language: sorted(phrases) for language, phrases in VOICE_PHRASES.items()})
 
 
 microphone = Microphone()
