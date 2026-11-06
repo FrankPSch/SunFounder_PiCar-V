@@ -284,7 +284,9 @@ function renderExtras(state) {
   $('#mic-bar').style.width = level == null ? '0' : Math.max(0, Math.min(100, (level + 70) / 70 * 100)) + '%';
   $('#mic-status').textContent = (audio.running ? `listening · ${level} dBFS` : 'off')
     + (audio.heard ? ` · heard "${audio.heard}" ${audio.heard_time}` : '') + ` · claps ${audio.claps} · alarms ${audio.alarms}`
-    + (audio.vosk_model ? '' : ' · vosk model missing') + (audio.error ? ' · ' + audio.error : '');
+    + (audio.vosk_model ? '' : ' · vosk model missing') + (audio.error ? ' · ' + audio.error : '')
+    + (audio.conversation && audio.conversation.state !== 'off' ? ` · Claude ${audio.conversation.state} ${audio.conversation.seconds_left} s` : '')
+    + (audio.conversation && audio.conversation.error ? ` · Claude: ${audio.conversation.error}` : '');
 
   $('#events').innerHTML = state.events.slice().reverse().map((e) => `<div><small>${e.time}</small> <b>${e.source}</b> ${escapeHtml(e.text)}</div>`).join('')
     || '<span class="muted">no events yet</span>';

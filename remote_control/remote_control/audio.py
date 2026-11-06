@@ -7,7 +7,7 @@ Microphone features. The USB mic can be opened by one process only, so one captu
   stop_word    - Vosk keywords (STOP_WORDS, English + German) stop the motors (act on partial results, fast)
   voice_commands - Vosk with small fixed word lists (VOICE_PHRASES); one recogniser per language in setting
                  voice_languages (default German only: fastest, and no mix-ups between the languages)
-  claude_voice - "hey claude" starts a conversation (WAKE_PHRASES)
+  claude_voice - "hey claude" (WAKE_PHRASES) starts a conversation (conversation.py); exact list words still steer during it
   record_audio - writes the chunks to a .wav while a video records
 The capture runs only while at least one of these is on.
 '''
@@ -24,6 +24,7 @@ import wave
 
 from . import events, features
 from .car import car
+from .conversation import conversation, SHORT_S
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = SAMPLE_RATE // 10 * 2
@@ -205,6 +206,8 @@ class Microphone(object):
                     self._noise_alarm(level)
 
             wake = features.enabled('claude_voice')
+            if wake or conversation.active():
+                conversation.feed(chunk, level)
             wanted_grammar = ('commands' if features.enabled('voice_commands') else 'stop' if features.enabled('stop_word') or wake else None, wake)
             if wanted_grammar != grammar_key:
                 recognizers, grammar_key = self._make_recognizers(wanted_grammar), wanted_grammar
@@ -256,13 +259,16 @@ class Microphone(object):
             recognizer.Reset()
             return
         if recognizer.AcceptWaveform(chunk):
-            # "[unk]" stands for speech outside the list: "[unk] links" still means "links"
-            words = [word for word in json.loads(recognizer.Result()).get('result', []) if word['word'] != '[unk]']
+            # "[unk]" stands for speech outside the list: "[unk] links" still means "links", except in a conversation
+            all_words = json.loads(recognizer.Result()).get('result', [])
+            words = [word for word in all_words if word['word'] != '[unk]']
             if words:
                 text = ' '.join(word['word'] for word in words)
                 confidence = min(word.get('conf', 0) for word in words)
                 if recent_peak_dbfs >= MIN_SPEECH_DBFS and confidence >= MIN_WORD_CONF:
-                    self._heard(language, text)
+                    in_sentence = conversation.active() and (len(words) != len(all_words) or conversation.speech_seconds() > SHORT_S)
+                    more_words_seconds = all_words[-1].get('end', 0) - all_words[0].get('start', 0) if len(words) != len(all_words) else None
+                    self._heard(language, text, in_sentence, more_words_seconds)
                 else:
                     self.status['rejected'] = '%s %s conf %.2f peak %.0f dBFS' % (time.strftime('%H:%M:%S'), text, confidence, recent_peak_dbfs)
                     self.status['rejected_count'] += 1
@@ -272,30 +278,36 @@ class Microphone(object):
                 car.stop('voice stop')
                 events.add('audio', 'heard "%s" -> STOP' % partial)
             elif (partial.replace('[unk]', '').strip() in FAST_PHRASES[language] and recent_peak_dbfs >= MIN_SPEECH_DBFS
-                  and features.enabled('voice_commands') and not events.speaking.is_set()):
+                  and features.enabled('voice_commands') and not events.speaking.is_set() and not conversation.active()):
                 recognizer.Reset()  # or the final result would run it a second time
                 self._heard(language, partial.replace('[unk]', '').strip())
 
-    def _heard(self, language, text):
+    def _heard(self, language, text, in_sentence=False, more_words_seconds=None):
+        '''in_sentence: part of a longer sentence during a conversation, which goes to Claude and steers nothing.
+        more_words_seconds: length of the whole utterance, when it held words outside the list.'''
         self.status.update(heard=text, heard_time=time.strftime('%H:%M:%S'))
-        if text in WAKE_PHRASES[language] and features.enabled('claude_voice') and not events.speaking.is_set():
+        wake = next((phrase for phrase in WAKE_PHRASES[language] if text == phrase or text.startswith(phrase + ' ')), None)
+        if wake and features.enabled('claude_voice') and not events.speaking.is_set():
             self.status['wake_time'] = time.strftime('%H:%M:%S')
-            events.add('audio', 'heard "%s": conversation requested' % text)
+            events.add('audio', 'heard "%s"' % text)
+            conversation.start(more_words_seconds)
             return
-        command = VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') and not events.speaking.is_set() else None
+        command = VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') and not events.speaking.is_set() and not in_sentence else None
         if command:
             now = time.time()
+            conversation.discard_sentence()
             if command == self._last_command[0] and language != self._last_command[2] and now - self._last_command[1] < REPEAT_IGNORE_S:
                 return  # the other language's recogniser heard the same word
             self._last_command = (command, now, language)
             VOICE_COMMANDS[command]()
             events.add('audio', 'voice command: %s -> %s' % (text, command), say=command)
-        elif any(word in text.split() for word in STOP_WORDS[language]):
+        elif any(word in text.split() for word in STOP_WORDS[language]) and (not in_sentence or car.drive_direction):
+            conversation.discard_sentence()
             car.stop('voice stop')
             events.add('audio', 'heard "%s" -> STOP' % text)
 
     def describe(self):
-        return dict(self.status, vosk_model=os.path.isdir(SPEECH_MODELS['en']),
+        return dict(self.status, conversation=conversation.describe(), vosk_model=os.path.isdir(SPEECH_MODELS['en']),
                     installed_languages=[language for language, model_dir in SPEECH_MODELS.items() if os.path.isdir(model_dir)],
                     phrases={language: sorted(phrases) for language, phrases in VOICE_PHRASES.items()})
 

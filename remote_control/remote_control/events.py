@@ -21,6 +21,7 @@ _speech_lock = threading.Lock()
 speaking = threading.Event()
 INTERNAL_AUDIO_CARDS = ('Headphones', 'vc4hdmi')
 PROMPT_ECHO_S = 0.5
+SPEAKER_DRAIN_S = 120
 
 
 def settings():
@@ -79,6 +80,44 @@ def _say(text):
             print('event: voice prompt failed: %s' % error)
         finally:
             speaking.clear()
+
+
+def open_speaker(sample_rate):
+    '''Raw 16-bit mono audio for write_speaker. Holds the speech lock and marks the car as speaking until close_speaker.'''
+    _speech_lock.acquire()
+    speaking.set()
+    speaker = audio_device('aplay')
+    try:
+        return subprocess.Popen(['aplay', '-q', '-t', 'raw', '-f', 'S16_LE', '-c', '1', '-r', str(sample_rate)] + (['-D', speaker] if speaker else []),
+                                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as error:
+        print('event: no speaker: %s' % error)
+        return None
+
+
+def write_speaker(player, audio):
+    if player is not None and player.poll() is None:
+        try:
+            player.stdin.write(audio)
+            player.stdin.flush()
+        except OSError as error:
+            print('event: speaker failed: %s' % error)
+
+
+def close_speaker(player):
+    try:
+        if player is not None:
+            try:
+                player.stdin.close()
+            except OSError:
+                pass
+            player.wait(timeout=SPEAKER_DRAIN_S)
+            time.sleep(PROMPT_ECHO_S)
+    except subprocess.TimeoutExpired:
+        player.kill()
+    finally:
+        speaking.clear()
+        _speech_lock.release()
 
 
 def audio_device(alsa_list_tool):
