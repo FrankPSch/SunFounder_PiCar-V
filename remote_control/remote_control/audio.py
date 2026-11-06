@@ -91,7 +91,8 @@ VOICE_PHRASES = {
     'de': {'vorwärts': 'forward', 'los': 'forward', 'rückwärts': 'back', 'zurück': 'back',
            'links': 'left', 'rechts': 'right', 'geradeaus': 'straight', 'schneller': 'faster', 'langsamer': 'slower',
            'kamera links': 'camera left', 'kamera rechts': 'camera right', 'kamera hoch': 'camera up', 'kamera runter': 'camera down',
-           'mitte': 'center', 'bereit': 'ready', 'foto': 'photo', 'bild': 'photo',
+           'mitte': 'center', 'startklar': 'ready',  # not "bereit": the German model hears it in English "straight"
+           'foto': 'photo', 'bild': 'photo',
            'aufnahme': 'record', 'aufnahme stopp': 'stop recording',
            'folge ball': 'follow ball', 'folge gesicht': 'follow face', 'schatzsuche': 'treasure hunt'},
 }
