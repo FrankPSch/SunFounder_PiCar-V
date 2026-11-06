@@ -10,6 +10,7 @@ Microphone features. The USB mic can be opened by one process only, so one captu
 The capture runs only while at least one of these is on.
 '''
 import audioop
+import collections
 import json
 import math
 import os
@@ -34,6 +35,11 @@ NOISE_DBFS = -18
 NOISE_CHUNKS = 3
 NOISE_COOLDOWN_S = 30
 STOP_WORDS = ('stop', 'halt')
+# A grammar-limited recogniser maps room noise onto its nearest word ("halt" twice a minute at -63 dBFS),
+# so a word only counts when it was loud enough and the recogniser is sure. Rejected words: status['rejected'].
+MIN_SPEECH_DBFS = -45       # loudest chunk of the last RECENT_CHUNKS must reach this
+RECENT_CHUNKS = 20          # 2 s
+MIN_WORD_CONF = 0.8
 AUDIO_FEATURES = ('sound_level', 'clap_stop', 'noise_alarm', 'stop_word', 'voice_commands')
 
 
@@ -75,7 +81,7 @@ VOICE_COMMANDS = {
 class Microphone(object):
     def __init__(self):
         self.status = {'running': False, 'level_dbfs': None, 'error': None, 'heard': None, 'heard_time': None,
-                       'claps': 0, 'alarms': 0}
+                       'claps': 0, 'alarms': 0, 'rejected': None, 'rejected_count': 0}
         self._wav = None
         self._wav_lock = threading.Lock()
         self._vosk_model = None
@@ -129,6 +135,7 @@ class Microphone(object):
     def _consume(self, process):
         recognizer, grammar_key = None, None
         quiet_level, last_clap, loud_chunks, last_alarm = -90.0, 0.0, 0, 0.0
+        recent_levels = collections.deque(maxlen=RECENT_CHUNKS)
         while self.wanted():
             chunk = process.stdout.read(CHUNK_BYTES)
             if len(chunk) < CHUNK_BYTES:
@@ -137,6 +144,7 @@ class Microphone(object):
             rms = audioop.rms(chunk, 2)
             level = round(20 * math.log10(max(rms, 1) / 32768.0), 1)
             self.status['level_dbfs'] = level
+            recent_levels.append(level)
             with self._wav_lock:
                 if self._wav:
                     self._wav.writeframes(chunk)
@@ -163,7 +171,7 @@ class Microphone(object):
             if wanted_grammar != grammar_key:
                 recognizer, grammar_key = self._make_recognizer(wanted_grammar), wanted_grammar
             if recognizer:
-                self._recognize(recognizer, chunk)
+                self._recognize(recognizer, chunk, max(recent_levels))
 
     def _noise_alarm(self, level):
         from . import media
@@ -186,16 +194,24 @@ class Microphone(object):
             self.status['error'] = 'vosk not ready (%s) - run tools/install_extras.sh' % error
             return None
         phrases = list(STOP_WORDS) + (sorted(VOICE_COMMANDS) if grammar_key == 'commands' else [])
-        return vosk.KaldiRecognizer(self._vosk_model, SAMPLE_RATE, json.dumps(phrases + ['[unk]']))
+        recognizer = vosk.KaldiRecognizer(self._vosk_model, SAMPLE_RATE, json.dumps(phrases + ['[unk]']))
+        recognizer.SetWords(True)
+        return recognizer
 
-    def _recognize(self, recognizer, chunk):
+    def _recognize(self, recognizer, chunk, recent_peak_dbfs):
         if recognizer.AcceptWaveform(chunk):
-            text = json.loads(recognizer.Result()).get('text', '')
+            result = json.loads(recognizer.Result())
+            text = result.get('text', '')
             if text and text != '[unk]':
-                self._heard(text)
+                confidence = min((word.get('conf', 0) for word in result.get('result', [])), default=0)
+                if recent_peak_dbfs >= MIN_SPEECH_DBFS and confidence >= MIN_WORD_CONF:
+                    self._heard(text)
+                else:
+                    self.status['rejected'] = '%s %s conf %.2f peak %.0f dBFS' % (time.strftime('%H:%M:%S'), text, confidence, recent_peak_dbfs)
+                    self.status['rejected_count'] += 1
         else:
             partial = json.loads(recognizer.PartialResult()).get('partial', '')
-            if any(word in partial.split() for word in STOP_WORDS) and car.drive_direction:
+            if any(word in partial.split() for word in STOP_WORDS) and car.drive_direction and recent_peak_dbfs >= MIN_SPEECH_DBFS:
                 car.stop('voice stop')
                 events.add('audio', 'heard "stop" -> STOP')
 
