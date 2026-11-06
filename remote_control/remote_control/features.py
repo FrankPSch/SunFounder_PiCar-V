@@ -37,7 +37,8 @@ FEATURES = {
     'clap_stop':          (False, 'Double clap stops the motors'),
     'noise_alarm':        (False, 'Loud noise -> photo + event (+ push if enabled)'),
     'stop_word':          (False, 'Saying "stop" stops the motors (Vosk, offline)'),
-    'voice_commands':     (False, 'Spoken commands like "forward", "camera left" (Vosk, offline)'),
+    'voice_commands':     (False, 'Spoken commands like "links", "kamera hoch" (Vosk, offline)'),
+    'claude_voice':       (False, 'Saying "hey Claude" starts a conversation'),
     # output
     'voice_prompts':      (False, 'Speak events with espeak-ng (needs a speaker)'),
     'push_notifications': (False, 'Send alarms to ntfy.sh (needs ntfy_topic in settings.json)'),

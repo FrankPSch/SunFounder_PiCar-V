@@ -31,7 +31,7 @@ def settings():
         return {}
 
 
-EDITABLE_SETTINGS = {'timelapse_seconds': int, 'ntfy_topic': str, 'mic_device': str}
+EDITABLE_SETTINGS = {'timelapse_seconds': int, 'ntfy_topic': str, 'mic_device': str, 'voice_languages': str}
 
 
 def update_setting(name, value):

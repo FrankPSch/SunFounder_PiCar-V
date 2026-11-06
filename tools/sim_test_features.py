@@ -41,7 +41,7 @@ def enabled(current, name):
 
 
 names = [f['name'] for f in state()['features']]
-check('22 feature toggles registered', len(names), 22)
+check('23 feature toggles registered', len(names), 23)
 for name in names:
     if name not in ('watchdog', 'telemetry', 'power_warning', 'stuck_detection'):
         cmd('feature', name=name, on=False)
