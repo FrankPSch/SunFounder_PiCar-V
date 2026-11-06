@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import wave
 
 VOICE_DIR = os.environ.get('PICAR_VOICE_DIR', r'D:\a_ClaudeCowork\PiCar\voice')
 os.environ['PATH'] = os.pathsep.join((os.path.join(VOICE_DIR, 'cublas'), r'C:\ProgramData\Anaconda3\Library\bin', os.environ['PATH']))
@@ -101,10 +102,24 @@ for _voice in VOICES.values():
         assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
 
 
+SPEECH_DIR = os.path.join(VOICE_DIR, 'tmp')
+piper_processes = {}
+
+
 def synthesize(sentence, language):
-    line = ' '.join(sentence.replace('*', ' ').split()) + '\n'
-    return subprocess.run([PIPER, '--model', os.path.join(VOICE_DIR, 'piper', VOICES[language] + '.onnx'), '--output-raw'],
-                          input=line.encode('utf-8'), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    '''Piper stays loaded (starting it costs about 1 s): each input line becomes a wav file, whose path it prints when done.'''
+    process = piper_processes.get(language)
+    if process is None or process.poll() is not None:
+        process = piper_processes[language] = subprocess.Popen(
+            [PIPER, '--model', os.path.join(VOICE_DIR, 'piper', VOICES[language] + '.onnx'), '--output_dir', SPEECH_DIR],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    process.stdin.write((' '.join(sentence.replace('*', ' ').split()) + '\n').encode('utf-8'))
+    process.stdin.flush()
+    path = process.stdout.readline().decode('utf-8').strip()
+    with wave.open(path, 'rb') as speech:
+        audio = speech.readframes(speech.getnframes())
+    os.remove(path)
+    return audio
 
 
 ## One conversation: the car has one microphone
@@ -187,7 +202,8 @@ def keep_tunnel_open():
 
 if __name__ == '__main__':
     print('warming up', flush=True)
-    transcribe(synthesize('Hallo.', 'de'))
+    for warm_up_language in LANGUAGES:
+        transcribe(synthesize('Hallo.', warm_up_language))
     threading.Thread(target=keep_tunnel_open, daemon=True).start()
     print('ready: model %s, whisper %s' % (MODEL, WHISPER_SIZE), flush=True)
     http.server.ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
