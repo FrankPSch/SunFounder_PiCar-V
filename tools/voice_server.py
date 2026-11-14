@@ -1,220 +1,49 @@
 # -*- coding: utf-8 -*-
 '''
-PC half of the car's Claude conversation: speech -> Whisper -> Claude -> Piper -> speech.
-The car stays in charge of steering and stop (remote_control/conversation.py); this only talks.
+PC half of the car's Claude conversation: speech -> Whisper (speech_to_text) -> Claude (claude_chat) -> Piper
+(text_to_speech) -> speech. The car stays in charge of driving and stop (remote_control/conversation.py); this only talks.
+Endpoints, headers and frames: remote_control/remote_control/voice_protocol.py.
 
-Start: tools\\voice_server.bat (needs the user variable ANTHROPIC_API_KEY; CLAUDE_VOICE_MODEL=echo works without it).
-Connection: the server listens on this PC's loopback only and opens an SSH tunnel, so the car reaches it at its own
-127.0.0.1:8766. No firewall rule, and nobody else on the network can use it.
-
-  GET  /health               {"model": ..., "whisper": ..., "build": ...}
-  GET  /hello?language=de    the spoken greeting after "hey claude", same frames as below
-  POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...],
-                             X-Car-Languages: "de" or "de,en" (one language: Whisper does not detect),
-                             X-Car-Playback-Rate: 16000 or 48000 (also on GET /hello, /news; reply header X-Audio-Rate)
-       reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
-       T fields: transcript + language, sentence, error, set_feature + on (the car flips that switch)
-  GET  /news                 announcements waiting for the car (build finished, ...), same frames; empty when none
-  POST /shutdown             ends this server and its tunnel; 409 while a feature build or deploy runs
+Start: tools/voice_launcher.py starts and stops it with the car; tools\\voice_server.bat by hand also works.
+Needs the user variable ANTHROPIC_API_KEY (CLAUDE_VOICE_MODEL=echo works without it).
+Connection: listens on this PC's loopback only and opens an SSH tunnel, so the car reaches it at its own 127.0.0.1.
+No firewall rule, and nobody else on the network can use the key.
 Feature requests by voice (propose -> "go" builds -> "deploy" installs): tools/feature_builder.py.
-Started and stopped with the car by tools/voice_launcher.py; starting it by hand still works.
 '''
-import audioop
 import http.server
 import json
 import os
-import re
-import struct
 import subprocess
 import threading
 import time
 import urllib.parse
-import wave
-
-VOICE_DIR = os.environ.get('PICAR_VOICE_DIR', r'D:\a_ClaudeCowork\PiCar\voice')
-os.environ['PATH'] = os.pathsep.join((os.path.join(VOICE_DIR, 'cublas'), r'C:\ProgramData\Anaconda3\Library\bin', os.environ['PATH']))
-
-import anthropic
-import numpy as np
-from faster_whisper import WhisperModel
 
 import car_tunnel
+import claude_chat
 import feature_builder
+import pc_settings
+import speech_to_text
+import text_to_speech
 
-CAR = 'pi@' + os.environ.get('PICAR_HOST', '192.168.178.131')
-# SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')  # now car_tunnel.SSH_KEY
-PORT = 8766
+protocol = pc_settings.voice_protocol
 TUNNEL_RETRY_S = 5
-
-## Speech to text
-WHISPER_SIZE = os.environ.get('WHISPER_SIZE', 'small')  # GTX 1070: small 0.8 s, medium 1.5 s for a 4.5 s sentence
-LANGUAGES = ('de', 'en')
-NOT_SPEECH_PROBABILITY = 0.6
-whisper_model = WhisperModel(WHISPER_SIZE, device='cuda', compute_type='int8_float32', download_root=os.path.join(VOICE_DIR, 'models'), local_files_only=True)
+SHUTDOWN_DELAY_S = 0.5      # the reply goes out first
+GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude"
+BUSY_STATES = ('building', 'deploying')
+assert set(GREETINGS) == set(protocol.LANGUAGES)
 
 
-def _whisper(samples, language=None, initial_prompt=None):
-    segments, info = whisper_model.transcribe(samples, language=language, beam_size=1, vad_filter=True, hotwords=None if initial_prompt else 'Claude',
-                                              initial_prompt=initial_prompt, condition_on_previous_text=False)
-    return ' '.join(segment.text.strip() for segment in segments if segment.no_speech_prob < NOT_SPEECH_PROBABILITY), info.language
+def log(text):
+    print('%s %s' % (time.strftime('%H:%M:%S'), text), flush=True)
 
 
-def transcribe(pcm, gate=None, languages=LANGUAGES):
-    '''gate: (pattern, example) when a word is awaited ("go", "deploy"). A German "go" often comes out as "Co." or "Boom";
-    a second German pass primed with the example hears it (measured: every "go" phrase found, "Cool"/"Gut" not taken).
-    languages: the car's setting voice_languages; with one language Whisper does not guess (it took the owner's
-    "Wie geht es dir?" for English "You get to do that?", 2026-11-14).'''
-    samples = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
-    text, language = _whisper(samples, languages[0] if len(languages) == 1 else None)
-    if language not in languages:  # short sentences are sometimes taken for a third language
-        language = languages[0]
-        text, _ = _whisper(samples, language)
-    if gate and text and not gate[0].search(text):
-        primed, _ = _whisper(samples, 'de', gate[1])
-        if gate[0].search(primed):
-            return primed, language
-    return text, language
-
-
-## Claude
-MODEL = os.environ.get('CLAUDE_VOICE_MODEL', 'claude-opus-5-5')  # 'echo' repeats the sentence, for tests without an API key
-EFFORT = os.environ.get('CLAUDE_VOICE_EFFORT', 'low')  # empty for a model without the effort setting
-MAX_TOKENS = 4000           # thinking counts too
-MAX_HISTORY_MESSAGES = 80
-SENTENCE_END = re.compile(r'(?<=[.!?:;])\s+')
-SYSTEM_PROMPT = (
-    'You are the voice of a small robot car (SunFounder PiCar-V) talking with its owner in the room. '
-    'Everything you write is read aloud by a speech synthesizer, so answer in one or two short spoken sentences, '
-    'in the language the owner used (German or English). No lists, markdown, emoji or abbreviations. '
-    'What the owner says comes from speech recognition and can contain mistakes; go by the likely meaning. '
-    'Each message starts with the current car status in square brackets. Mention it only when it matters. '
-    'You can talk and read the status, but you cannot move the car: the owner steers with single spoken words such as '
-    '"links", "rechts", "vorwärts" and "stopp". Say so if asked to drive. '
-    'You can switch the car\'s features on and off with set_feature. Before switching on a feature that makes the car drive '
-    '(tracking_drive, room_navigation), ask once whether the car has room. '
-    'New features: when the owner asks for something the car cannot do yet, say in one or two sentences what you understood, '
-    'offer two or three short numbered options for how to build it, call propose_feature, and ask the owner to say "go" with '
-    'the number. Call start_build only after the owner said "go". When a build is ready and the owner says "deploy", '
-    'call deploy_feature. The status line tells you the state of the current feature request.')
-SPOKEN_ERROR = {'de': 'Ich kann Claude gerade nicht erreichen.', 'en': 'I cannot reach Claude right now.'}
-SPOKEN_REFUSAL = {'de': 'Dazu kann ich nichts sagen.', 'en': 'I cannot help with that.'}
-client = None if MODEL == 'echo' else anthropic.Anthropic()
-
-
-def _tool(name, description, properties, required):
-    return {'name': name, 'description': description, 'eager_input_streaming': True,
-            'input_schema': {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}}
-
-
-TOOLS = [
-    _tool('set_feature', 'Switch one of the car\'s features on or off. The names and current states are in the status line.',
-          {'name': {'type': 'string'}, 'on': {'type': 'boolean'}}, ['name', 'on']),
-    _tool('propose_feature', 'Save a new feature request with your understanding and the options, before asking for "go".',
-          {'title': {'type': 'string', 'description': 'two to five words'}, 'understanding': {'type': 'string'},
-           'options': {'type': 'array', 'items': {'type': 'string'}, 'description': 'two or three ways to build it'}},
-          ['title', 'understanding', 'options']),
-    _tool('start_build', 'Build the proposed feature. Only after the owner said "go".',
-          {'option': {'type': 'string', 'description': 'the option the owner chose, in full'}}, ['option']),
-    _tool('deploy_feature', 'Install the built feature on the car. Only after the owner said "deploy".', {}, []),
-]
-TOOL_TYPES = {tool['name']: {key: value['type'] for key, value in tool['input_schema']['properties'].items()} for tool in TOOLS}
-JSON_TYPES = {'string': str, 'boolean': bool, 'array': list}
-
-
-class Refused(Exception):
-    pass
-
-
-def _valid(name, arguments):
-    '''Tool input streams unchecked (eager_input_streaming): check it here before running the tool.'''
-    types = TOOL_TYPES.get(name)
-    return (types is not None and isinstance(arguments, dict) and set(arguments) == set(types)
-            and all(isinstance(arguments[key], JSON_TYPES[kind]) for key, kind in types.items()))
-
-
-def claude_sentences(turn, run_tool):
-    '''Streams Claude's answer sentence by sentence; runs the tools it calls and goes on until it is done.
-    turn: history + this turn's user message; every new message is appended to it.'''
-    options = {'output_config': {'effort': EFFORT}} if EFFORT else {}
-    while True:
-        with client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, messages=turn, tools=TOOLS,
-                                    cache_control={'type': 'ephemeral'}, **options) as stream:
-            unfinished = ''
-            for text in stream.text_stream:
-                parts = SENTENCE_END.split(unfinished + text)
-                unfinished = parts.pop()
-                for sentence in parts:
-                    yield sentence
-            if unfinished.strip():
-                yield unfinished
-            message = stream.get_final_message()
-        if message.stop_reason == 'refusal':
-            raise Refused()
-        turn.append({'role': 'assistant', 'content': message.content})
-        if message.stop_reason != 'tool_use':  # max_tokens with a cut-off tool call: do not run it
-            return
-        results = []
-        for block in message.content:
-            if block.type == 'tool_use':
-                if _valid(block.name, block.input):
-                    results.append({'type': 'tool_result', 'tool_use_id': block.id, 'content': run_tool(block.name, block.input)})
-                else:
-                    results.append({'type': 'tool_result', 'tool_use_id': block.id, 'is_error': True,
-                                    'content': json.dumps({'INVALID_JSON': json.dumps(block.input)})})
-        turn.append({'role': 'user', 'content': results})
-
-
-## Text to speech
-# VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}  # 16 kHz, but buzzy and hard to follow (owner, 2026-11-14)
-VOICES = {'de': 'de_DE-thorsten-medium', 'en': 'en_US-lessac-medium'}  # 22.05 kHz, resampled for the car
-CAR_SAMPLE_RATE = 16000          # older cars; a car that sends X-Car-Playback-Rate gets that rate (the reply says X-Audio-Rate)
-PLAYBACK_RATES = (16000, 48000)
-GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude", instead of a tone
-assert set(GREETINGS) == set(LANGUAGES)
-PIPER = os.path.join(VOICE_DIR, 'piper', 'piper', 'piper.exe')
-# 1.0 = Piper's own pace. It sounded far too fast only because the Jabra played 16 kHz at 48 kHz (events.PLAYBACK_RATE)
-SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.0')
-SENTENCE_PAUSE_S = '0.4'
-assert set(VOICES) == set(LANGUAGES)
-# for _voice in VOICES.values():  # the voices are resampled now
-#     with open(os.path.join(VOICE_DIR, 'piper', _voice + '.onnx.json'), encoding='utf-8') as _config:
-#         assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
-
-
-SPEECH_DIR = os.path.join(feature_builder.WORK_DIR, 'tmp')
-os.makedirs(SPEECH_DIR, exist_ok=True)
-piper_processes = {}
-
-
-def synthesize(sentence, language, rate=CAR_SAMPLE_RATE):
-    '''Piper stays loaded (starting it costs about 1 s): each input line becomes a wav file, whose path it prints when done.
-    rate: what the car asks for (X-Car-Playback-Rate); 16 kHz also for Whisper.'''
-    process = piper_processes.get(language)
-    if process is None or process.poll() is not None:
-        process = piper_processes[language] = subprocess.Popen(
-            [PIPER, '--model', os.path.join(VOICE_DIR, 'piper', VOICES[language] + '.onnx'), '--output_dir', SPEECH_DIR,
-             '--length_scale', SPEECH_SLOWER, '--sentence_silence', SENTENCE_PAUSE_S],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    process.stdin.write((' '.join(sentence.replace('*', ' ').split()) + '\n').encode('utf-8'))
-    process.stdin.flush()
-    path = process.stdout.readline().decode('utf-8').strip()
-    with wave.open(path, 'rb') as speech:
-        audio, voice_rate = speech.readframes(speech.getnframes()), speech.getframerate()
-    os.remove(path)
-    if voice_rate != rate:
-        audio = audioop.ratecv(audio, 2, 1, voice_rate, rate, None)[0]
-    return audio
-
-
-## One conversation: the car has one microphone
-history = []
-history_lock = threading.Lock()
+chat = claude_chat.Chat()
 news = []                   # (language, sentence) for the car's next GET /news
 news_lock = threading.Lock()
 
 
 def announce(language, sentence):
-    print('%s news: %s' % (time.strftime('%H:%M:%S'), sentence), flush=True)
+    log('news: ' + sentence)
     with news_lock:
         news.append((language, sentence))
 
@@ -222,60 +51,66 @@ def announce(language, sentence):
 builder = feature_builder.Builder(announce)
 
 
-def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio, car_languages=LANGUAGES, playback_rate=CAR_SAMPLE_RATE):
-    started = time.time()
-    with history_lock:
-        if new_conversation:
-            del history[:]
-        transcript, language = transcribe(pcm, feature_builder.AWAITED_WORD.get(builder.state), car_languages)
-        heard_at = time.time()
-        send_text({'transcript': transcript, 'language': language})
-        print('%s heard (%.2f s for %.1f s, %s): %s' % (time.strftime('%H:%M:%S'), heard_at - started, len(pcm) / 32000.0, language, transcript), flush=True)
-        if not transcript:
-            return
+class Turn(object):
+    '''One utterance from the car and the spoken answer, sent as frames while they are made.'''
+    def __init__(self, handler, car):
+        self.handler, self.car, self.language = handler, car, protocol.LANGUAGES[0]
 
-        def say(sentence):
-            send_text({'sentence': sentence})
-            send_audio(synthesize(sentence, language, playback_rate))
+    def say(self, sentence):
+        self.handler.send_text({'sentence': sentence})
+        self.handler.send_audio(text_to_speech.synthesize(sentence, self.language, self.handler.playback_rate()))
 
-        def run_tool(name, arguments):
-            print('  tool %s %s' % (name, json.dumps(arguments, ensure_ascii=False)[:300]), flush=True)
-            if name == 'set_feature':
-                known = [feature[0] for feature in car_features]
-                if arguments['name'] not in known:
-                    return 'Unknown feature. Known: ' + ', '.join(known)
-                send_text({'set_feature': arguments['name'], 'on': arguments['on']})
-                return 'Switched %s %s.' % (arguments['name'], 'on' if arguments['on'] else 'off')
-            if name == 'propose_feature':
-                return builder.propose(arguments['title'], arguments['understanding'], arguments['options'], language)
-            if name == 'start_build':
-                return builder.start(arguments['option'], transcript)
-            return builder.deploy(transcript)
+    def run(self, audio, new_conversation):
+        started = time.time()
+        with chat.lock:
+            if new_conversation:
+                chat.forget()
+            transcript, self.language = speech_to_text.transcribe(audio, self.car['languages'], feature_builder.AWAITED_WORD.get(builder.state))
+            self.handler.send_text({'transcript': transcript, 'language': self.language})
+            log('heard (%.2f s for %.1f s, %s): %s' % (time.time() - started, len(audio) / 2.0 / protocol.UTTERANCE_RATE, self.language, transcript))
+            if transcript:
+                self._answer(transcript, started)
 
+    def _answer(self, transcript, started):
         spoken = []
         try:
-            if client is None:
-                say(transcript)
-                spoken.append(transcript)
-            else:
-                switches = '; '.join('%s=%s (%s)' % (name, 'on' if on else 'off', help_text) for name, on, help_text in car_features)
-                status = '[car: %s]\n[switches: %s]\n[%s]\n' % (car_status, switches, builder.describe())
-                turn = history + [{'role': 'user', 'content': status + transcript}]
-                for sentence in claude_sentences(turn, run_tool):
-                    if not spoken:
-                        print('  first sentence after %.2f s' % (time.time() - started), flush=True)
-                    say(sentence)
-                    spoken.append(sentence)
-                history[:] = turn  # append-only, so the thinking blocks in it stay valid
-                while len(history) > MAX_HISTORY_MESSAGES or (history and not isinstance(history[0]['content'], str)):
-                    del history[0]
-        except Refused:
-            say(SPOKEN_REFUSAL[language])
-        except anthropic.AnthropicError as error:
-            print('  Claude failed:', type(error).__name__, str(error)[:300], flush=True)
-            send_text({'error': type(error).__name__})
-            say(SPOKEN_ERROR[language])
-        print('  done after %.2f s: %s' % (time.time() - started, ' '.join(spoken)), flush=True)
+            for sentence in chat.sentences(self._status_line(), transcript, lambda name, arguments: self._run_tool(name, arguments, transcript)):
+                if not spoken:
+                    log('  first sentence after %.2f s' % (time.time() - started))
+                self.say(sentence)
+                spoken.append(sentence)
+        except claude_chat.Refused:
+            self.say(claude_chat.SPOKEN_REFUSAL[self.language])
+        except claude_chat.anthropic.AnthropicError as error:
+            log('  Claude failed: %s %s' % (type(error).__name__, str(error)[:300]))
+            self.handler.send_text({'error': type(error).__name__})
+            self.say(claude_chat.SPOKEN_ERROR[self.language])
+        log('  done after %.2f s: %s' % (time.time() - started, ' '.join(spoken)))
+
+    def _status_line(self):
+        switches = '; '.join('%s=%s (%s)' % (name, 'on' if on else 'off', help_text) for name, on, help_text in self.car['features'])
+        car_commands = '; '.join('%s (%s)' % (name, description) for name, description in self.car['commands'])
+        return '[car: %s]\n[switches: %s]\n[commands: %s]\n[%s]\n' % (self.car['status'], switches, car_commands, builder.describe())
+
+    def _run_tool(self, name, arguments, transcript):
+        log('  tool %s %s' % (name, json.dumps(arguments, ensure_ascii=False)[:300]))
+        if name == 'set_feature':
+            known = [feature[0] for feature in self.car['features']]
+            if arguments['name'] not in known:
+                return 'Unknown feature. Known: ' + ', '.join(known)
+            self.handler.send_text({'set_feature': arguments['name'], 'on': arguments['on']})
+            return 'Switched %s %s.' % (arguments['name'], 'on' if arguments['on'] else 'off')
+        if name == 'run_command':
+            known = [command[0] for command in self.car['commands']]
+            if arguments['name'] not in known:
+                return 'Unknown command. Known: ' + ', '.join(known)
+            self.handler.send_text({'run_command': arguments['name']})
+            return 'Ran %s.' % arguments['name']
+        if name == 'propose_feature':
+            return builder.propose(arguments['title'], arguments['understanding'], arguments['options'], self.language)
+        if name == 'start_build':
+            return builder.start(arguments['option'], transcript)
+        return builder.deploy(transcript)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -284,89 +119,97 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def _playback_rate(self):
-        rate = self.headers.get('X-Car-Playback-Rate', '')
-        return int(rate) if rate.isdigit() and int(rate) in PLAYBACK_RATES else CAR_SAMPLE_RATE
+    # ---- what the car sent ----
+    def playback_rate(self):
+        rate = self.headers.get(protocol.PLAYBACK_RATE, '')
+        return int(rate) if rate.isdigit() and int(rate) in protocol.PLAYBACK_RATES else protocol.DEFAULT_SPEECH_RATE
 
-    def _start_frames(self):
-        '''200 and the audio rate of the frames that follow.'''
+    def car(self):
+        languages = tuple(name for name in (self.headers.get(protocol.VOICE_LANGUAGES) or '').split(',') if name in protocol.LANGUAGES)
+        return {'status': self.headers.get(protocol.STATUS, ''), 'features': json.loads(self.headers.get(protocol.FEATURES) or '[]'),
+                'commands': json.loads(self.headers.get(protocol.COMMANDS) or '[]'), 'languages': languages or protocol.LANGUAGES}
+
+    # ---- replies ----
+    def start_frames(self):
         self.send_response(200)
-        self.send_header('X-Audio-Rate', str(self._playback_rate()))
+        self.send_header(protocol.AUDIO_RATE, str(self.playback_rate()))
         self.end_headers()
 
-    def do_GET(self):
-        url = urllib.parse.urlparse(self.path)
-        if url.path == '/hello':
-            language = (urllib.parse.parse_qs(url.query).get('language') or [LANGUAGES[0]])[0]
-            language = language if language in GREETINGS else LANGUAGES[0]
-            self._start_frames()
-            self._frame(b'T', json.dumps({'sentence': GREETINGS[language]}).encode('ascii'))
-            self._frame(b'A', synthesize(GREETINGS[language], language, self._playback_rate()))
-            return
-        if self.path == '/news':
-            with news_lock:
-                waiting, news[:] = list(news), []
-            self._start_frames()
-            try:
-                for language, sentence in waiting:
-                    self._frame(b'T', json.dumps({'sentence': sentence}).encode('ascii'))
-                    self._frame(b'A', synthesize(sentence, language, self._playback_rate()))
-            except OSError as error:
-                print('  car went away during news:', error, flush=True)
-            return
-        body = json.dumps({'model': MODEL, 'whisper': WHISPER_SIZE, 'build': builder.describe()}).encode('ascii')
-        self.send_response(200 if self.path == '/health' else 404)
+    def send_text(self, fields):
+        self._send(protocol.frame(protocol.TEXT, json.dumps(fields).encode('ascii')))
+
+    def send_audio(self, audio):
+        self._send(protocol.frame(protocol.AUDIO, audio))
+
+    def _send(self, data):
+        self.wfile.write(data)
+        self.wfile.flush()
+
+    def _reply(self, status, body=b''):
+        self.send_response(status)
         self.end_headers()
         self.wfile.write(body)
 
-    def _frame(self, kind, payload):
-        self.wfile.write(kind + struct.pack('>I', len(payload)) + payload)
-        self.wfile.flush()
+    # ---- endpoints ----
+    def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        try:
+            if url.path == '/hello':
+                self._hello((urllib.parse.parse_qs(url.query).get('language') or [''])[0])
+            elif url.path == '/news':
+                self._news()
+            elif url.path == '/health':
+                self._reply(200, json.dumps({'model': claude_chat.MODEL, 'whisper': speech_to_text.WHISPER_SIZE, 'build': builder.describe()}).encode('ascii'))
+            else:
+                self._reply(404)
+        except OSError as error:
+            log('  car went away: %s' % error)
+
+    def _hello(self, language):
+        language = language if language in GREETINGS else protocol.LANGUAGES[0]
+        self.start_frames()
+        self.send_text({'sentence': GREETINGS[language]})
+        self.send_audio(text_to_speech.synthesize(GREETINGS[language], language, self.playback_rate()))
+
+    def _news(self):
+        with news_lock:
+            waiting, news[:] = list(news), []
+        self.start_frames()
+        for language, sentence in waiting:
+            self.send_text({'sentence': sentence})
+            self.send_audio(text_to_speech.synthesize(sentence, language, self.playback_rate()))
 
     def do_POST(self):
         url = urllib.parse.urlparse(self.path)
         if url.path == '/shutdown':
-            busy = builder.state in ('building', 'deploying')
-            self.send_response(409 if busy else 200)
-            self.end_headers()
-            self.wfile.write(builder.describe().encode('ascii', 'replace'))
-            if not busy:
-                print('shutdown requested', flush=True)
-                # the whole process tree: the SSH tunnel and Piper must not outlive the server
-                threading.Timer(0.5, subprocess.run, (['taskkill', '/T', '/F', '/PID', str(os.getpid())],),
-                                {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}).start()
-            return
-        pcm = self.rfile.read(int(self.headers['Content-Length']))
+            return self._shutdown()
+        audio = self.rfile.read(int(self.headers['Content-Length']))
         if url.path != '/utterance':
-            self.send_response(404)
-            self.end_headers()
-            return
-        self._start_frames()
-        car_languages = tuple(name for name in (self.headers.get('X-Car-Languages') or '').split(',') if name in LANGUAGES) or LANGUAGES
+            return self._reply(404)
+        self.start_frames()
         try:
-            answer(pcm, urllib.parse.parse_qs(url.query).get('new') == ['1'], self.headers.get('X-Car-Status', ''),
-                   json.loads(self.headers.get('X-Car-Features') or '[]'), lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')),
-                   lambda audio: self._frame(b'A', audio), car_languages, self._playback_rate())
+            Turn(self, self.car()).run(audio, urllib.parse.parse_qs(url.query).get('new') == ['1'])
         except OSError as error:
-            print('  car went away:', error, flush=True)
+            log('  car went away: %s' % error)
+
+    def _shutdown(self):
+        busy = builder.state in BUSY_STATES
+        self._reply(409 if busy else 200, builder.describe().encode('ascii', 'replace'))
+        if not busy:
+            log('shutdown requested')
+            # the whole process tree: the SSH tunnel and Piper must not outlive the server
+            threading.Timer(SHUTDOWN_DELAY_S, subprocess.run, (['taskkill', '/T', '/F', '/PID', str(os.getpid())],),
+                            {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}).start()
 
 
-# def keep_tunnel_open():  # now car_tunnel.keep_open, which also frees a port held by a dead connection
-#     command = ['ssh', '-N', '-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
-#                '-o', 'ServerAliveCountMax=2', '-R', '%d:127.0.0.1:%d' % (PORT, PORT), CAR]
-#     while True:
-#         print('tunnel to', CAR, flush=True)
-#         subprocess.run(command)
-#         print('tunnel closed, next try in %d s' % TUNNEL_RETRY_S, flush=True)
-#         time.sleep(TUNNEL_RETRY_S)
-def keep_tunnel_open():
-    car_tunnel.keep_open(CAR, PORT, TUNNEL_RETRY_S, lambda text: print(time.strftime('%H:%M:%S'), text, flush=True))
+def main():
+    print('warming up', flush=True)
+    for language in protocol.LANGUAGES:
+        speech_to_text.transcribe(text_to_speech.synthesize('Hallo.', language))
+    threading.Thread(target=car_tunnel.keep_open, args=(pc_settings.CAR, protocol.VOICE_PORT, TUNNEL_RETRY_S, log), name='tunnel', daemon=True).start()
+    print('ready: model %s, whisper %s' % (claude_chat.MODEL, speech_to_text.WHISPER_SIZE), flush=True)
+    http.server.ThreadingHTTPServer(('127.0.0.1', protocol.VOICE_PORT), Handler).serve_forever()
 
 
 if __name__ == '__main__':
-    print('warming up', flush=True)
-    for warm_up_language in LANGUAGES:
-        transcribe(synthesize('Hallo.', warm_up_language))
-    threading.Thread(target=keep_tunnel_open, daemon=True).start()
-    print('ready: model %s, whisper %s' % (MODEL, WHISPER_SIZE), flush=True)
-    http.server.ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
+    main()

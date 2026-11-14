@@ -24,14 +24,12 @@ import urllib.error
 import urllib.request
 
 import car_tunnel
+import pc_settings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VOICE_DIR = os.environ.get('PICAR_VOICE_DIR', r'D:\a_ClaudeCowork\PiCar\voice')
-PYTHON = os.path.join(VOICE_DIR, 'env', 'Scripts', 'python.exe')
-CAR_HOST = os.environ.get('PICAR_HOST', '192.168.178.131')
-# SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')  # now car_tunnel.SSH_KEY
-PORT = 8767
-VOICE_SERVER_URL = 'http://127.0.0.1:8766'
+VOICE_DIR, PYTHON, CAR_HOST = pc_settings.VOICE_DIR, pc_settings.VOICE_PYTHON, pc_settings.CAR_HOST
+PORT = pc_settings.voice_protocol.LAUNCHER_PORT
+VOICE_SERVER_URL = 'http://127.0.0.1:%d' % pc_settings.voice_protocol.VOICE_PORT
 WATCH_S = 15
 CAR_GONE_S = 120
 TUNNEL_RETRY_S = 10
@@ -159,18 +157,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._reply(404, {})
 
 
-# def keep_tunnel_open():  # now car_tunnel.keep_open, which also frees a port held by a dead connection
-#     command = ['ssh', '-N', '-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
-#                '-o', 'ServerAliveCountMax=2', '-R', '%d:127.0.0.1:%d' % (PORT, PORT), 'pi@' + CAR_HOST]
-#     while True:
-#         if launcher.car_up:
-#             started = time.time()
-#             subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
-#             if time.time() - started > 60:
-#                 log('tunnel to the car closed')
-#         time.sleep(TUNNEL_RETRY_S)
 def keep_tunnel_open():
-    car_tunnel.keep_open('pi@' + CAR_HOST, PORT, TUNNEL_RETRY_S, log, lambda: launcher.car_up)
+    car_tunnel.keep_open(pc_settings.CAR, PORT, TUNNEL_RETRY_S, log, lambda: launcher.car_up)
 
 
 if __name__ == '__main__':
