@@ -13,7 +13,8 @@ SSH_OPTIONS = ['-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 
 
 def _free_car_port(car, port):
     '''Ends the car process listening on 127.0.0.1:port: only called when our own tunnel is not up, so it is a stale one.'''
-    command = "kill $(ss -ltnpH 'sport = :%d' | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u) 2>/dev/null" % port
+    # sudo: sshd sessions are not dumpable, so without root neither ss -p nor fuser can see who holds the port
+    command = 'sudo -n fuser -k -n tcp %d' % port
     subprocess.run(['ssh'] + SSH_OPTIONS + [car, command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=30)
 
