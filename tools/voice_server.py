@@ -10,7 +10,8 @@ Connection: the server listens on this PC's loopback only and opens an SSH tunne
   GET  /health               {"model": ..., "whisper": ..., "build": ...}
   GET  /hello?language=de    the spoken greeting after "hey claude", same frames as below
   POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...],
-                             X-Car-Languages: "de" or "de,en" (one language: Whisper does not detect)
+                             X-Car-Languages: "de" or "de,en" (one language: Whisper does not detect),
+                             X-Car-Playback-Rate: 16000 or 48000 (also on GET /hello, /news; reply header X-Audio-Rate)
        reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
        T fields: transcript + language, sentence, error, set_feature + on (the car flips that switch)
   GET  /news                 announcements waiting for the car (build finished, ...), same frames; empty when none
@@ -166,7 +167,8 @@ def claude_sentences(turn, run_tool):
 ## Text to speech
 # VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}  # 16 kHz, but buzzy and hard to follow (owner, 2026-11-14)
 VOICES = {'de': 'de_DE-thorsten-medium', 'en': 'en_US-lessac-medium'}  # 22.05 kHz, resampled for the car
-CAR_SAMPLE_RATE = 16000
+CAR_SAMPLE_RATE = 16000          # older cars; a car that sends X-Car-Playback-Rate gets that rate (the reply says X-Audio-Rate)
+PLAYBACK_RATES = (16000, 48000)
 GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude", instead of a tone
 assert set(GREETINGS) == set(LANGUAGES)
 PIPER = os.path.join(VOICE_DIR, 'piper', 'piper', 'piper.exe')
@@ -184,8 +186,9 @@ os.makedirs(SPEECH_DIR, exist_ok=True)
 piper_processes = {}
 
 
-def synthesize(sentence, language):
-    '''Piper stays loaded (starting it costs about 1 s): each input line becomes a wav file, whose path it prints when done.'''
+def synthesize(sentence, language, rate=CAR_SAMPLE_RATE):
+    '''Piper stays loaded (starting it costs about 1 s): each input line becomes a wav file, whose path it prints when done.
+    rate: what the car asks for (X-Car-Playback-Rate); 16 kHz also for Whisper.'''
     process = piper_processes.get(language)
     if process is None or process.poll() is not None:
         process = piper_processes[language] = subprocess.Popen(
@@ -196,10 +199,10 @@ def synthesize(sentence, language):
     process.stdin.flush()
     path = process.stdout.readline().decode('utf-8').strip()
     with wave.open(path, 'rb') as speech:
-        audio, rate = speech.readframes(speech.getnframes()), speech.getframerate()
+        audio, voice_rate = speech.readframes(speech.getnframes()), speech.getframerate()
     os.remove(path)
-    if rate != CAR_SAMPLE_RATE:  # the car plays 16 kHz only
-        audio = audioop.ratecv(audio, 2, 1, rate, CAR_SAMPLE_RATE, None)[0]
+    if voice_rate != rate:
+        audio = audioop.ratecv(audio, 2, 1, voice_rate, rate, None)[0]
     return audio
 
 
@@ -219,7 +222,7 @@ def announce(language, sentence):
 builder = feature_builder.Builder(announce)
 
 
-def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio, car_languages=LANGUAGES):
+def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio, car_languages=LANGUAGES, playback_rate=CAR_SAMPLE_RATE):
     started = time.time()
     with history_lock:
         if new_conversation:
@@ -233,7 +236,7 @@ def answer(pcm, new_conversation, car_status, car_features, send_text, send_audi
 
         def say(sentence):
             send_text({'sentence': sentence})
-            send_audio(synthesize(sentence, language))
+            send_audio(synthesize(sentence, language, playback_rate))
 
         def run_tool(name, arguments):
             print('  tool %s %s' % (name, json.dumps(arguments, ensure_ascii=False)[:300]), flush=True)
@@ -281,25 +284,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def _playback_rate(self):
+        rate = self.headers.get('X-Car-Playback-Rate', '')
+        return int(rate) if rate.isdigit() and int(rate) in PLAYBACK_RATES else CAR_SAMPLE_RATE
+
+    def _start_frames(self):
+        '''200 and the audio rate of the frames that follow.'''
+        self.send_response(200)
+        self.send_header('X-Audio-Rate', str(self._playback_rate()))
+        self.end_headers()
+
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
         if url.path == '/hello':
             language = (urllib.parse.parse_qs(url.query).get('language') or [LANGUAGES[0]])[0]
             language = language if language in GREETINGS else LANGUAGES[0]
-            self.send_response(200)
-            self.end_headers()
+            self._start_frames()
             self._frame(b'T', json.dumps({'sentence': GREETINGS[language]}).encode('ascii'))
-            self._frame(b'A', synthesize(GREETINGS[language], language))
+            self._frame(b'A', synthesize(GREETINGS[language], language, self._playback_rate()))
             return
         if self.path == '/news':
             with news_lock:
                 waiting, news[:] = list(news), []
-            self.send_response(200)
-            self.end_headers()
+            self._start_frames()
             try:
                 for language, sentence in waiting:
                     self._frame(b'T', json.dumps({'sentence': sentence}).encode('ascii'))
-                    self._frame(b'A', synthesize(sentence, language))
+                    self._frame(b'A', synthesize(sentence, language, self._playback_rate()))
             except OSError as error:
                 print('  car went away during news:', error, flush=True)
             return
@@ -326,13 +337,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}).start()
             return
         pcm = self.rfile.read(int(self.headers['Content-Length']))
-        self.send_response(200 if url.path == '/utterance' else 404)
-        self.end_headers()
+        if url.path != '/utterance':
+            self.send_response(404)
+            self.end_headers()
+            return
+        self._start_frames()
         car_languages = tuple(name for name in (self.headers.get('X-Car-Languages') or '').split(',') if name in LANGUAGES) or LANGUAGES
         try:
             answer(pcm, urllib.parse.parse_qs(url.query).get('new') == ['1'], self.headers.get('X-Car-Status', ''),
                    json.loads(self.headers.get('X-Car-Features') or '[]'), lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')),
-                   lambda audio: self._frame(b'A', audio), car_languages)
+                   lambda audio: self._frame(b'A', audio), car_languages, self._playback_rate())
         except OSError as error:
             print('  car went away:', error, flush=True)
 

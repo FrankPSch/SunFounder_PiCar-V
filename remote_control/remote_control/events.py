@@ -72,12 +72,12 @@ def _push(text):
         print('event: push failed: %s' % error)
 
 
-def _say(text):
+def _say(text, language='en'):
     with _speech_lock:
         speaking.set()
         try:
             speaker = audio_device('aplay')
-            voice = subprocess.run(['espeak-ng', '-v', 'en', '-s', '150', '--stdout', text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
+            voice = subprocess.run(['espeak-ng', '-v', language, '-s', '150', '--stdout', text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
             subprocess.run(['aplay', '-q'] + (['-D', speaker] if speaker else []), input=voice.stdout, stderr=subprocess.DEVNULL, timeout=15)
             time.sleep(PROMPT_ECHO_S)
         except (OSError, subprocess.SubprocessError) as error:
@@ -148,3 +148,9 @@ def audio_device(alsa_list_tool):
 
 def recent(count=40):
     return list(log)[-count:]
+
+
+# Every start of the car software (boot, restart, update) says so; the software loads this module once at startup.
+STARTUP_MESSAGE = 'Ich bin bereit.'
+if not os.environ.get('PICAR_SIM'):
+    threading.Thread(target=_say, args=(STARTUP_MESSAGE, 'de'), name='startup-message', daemon=True).start()

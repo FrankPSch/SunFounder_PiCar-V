@@ -23,6 +23,7 @@ VOICE_SERVER = ('127.0.0.1', 8766)
 LAUNCHER = ('127.0.0.1', 8767)
 SERVER_READY_S = 90         # Whisper and Piper warm up on the PC
 DEFAULT_VOICE_LANGUAGES = 'de'
+PLAYBACK_HEADER = {'X-Car-Playback-Rate': str(events.PLAYBACK_RATE)}  # the PC's speech comes at this rate (X-Audio-Rate)
 HEALTH_TIMEOUT_S = 2
 ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
@@ -126,7 +127,7 @@ class Conversation(object):
     def _open(self):
         try:
             connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S * 3)
-            connection.request('GET', '/hello?language=' + voice_languages()[0])
+            connection.request('GET', '/hello?language=' + voice_languages()[0], headers=PLAYBACK_HEADER)
             response = connection.getresponse()
             if response.status != 200:  # a voice server from before /hello
                 response.read()
@@ -204,7 +205,7 @@ class Conversation(object):
     def _exchange(self, sentence):
         connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
         connection.request('POST', '/utterance?new=%d' % self._new, sentence, {'Content-Type': 'application/octet-stream',
-                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features(), 'X-Car-Languages': ','.join(voice_languages())})
+                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features(), 'X-Car-Languages': ','.join(voice_languages()), 'X-Car-Playback-Rate': str(events.PLAYBACK_RATE)})
         response = connection.getresponse()
         if response.status != 200:
             raise ValueError('HTTP %d' % response.status)
@@ -218,7 +219,7 @@ class Conversation(object):
                 continue
             try:
                 connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
-                connection.request('GET', '/news')
+                connection.request('GET', '/news', headers=PLAYBACK_HEADER)
                 response = connection.getresponse()
                 if response.status == 200:
                     self._play_reply(response)
@@ -256,7 +257,7 @@ class Conversation(object):
                 elif kind == b'A':
                     if not speaker_open:
                         self.status['state'] = 'speaking'
-                        speaker, speaker_open = events.open_speaker(SAMPLE_RATE), True
+                        speaker, speaker_open = events.open_speaker(int(response.getheader('X-Audio-Rate') or SAMPLE_RATE)), True
                     events.write_speaker(speaker, payload)
         finally:
             if speaker_open:
