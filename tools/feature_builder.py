@@ -178,6 +178,16 @@ def run_sim_tests(worktree):
         shutil.rmtree(data_dir, ignore_errors=True)  # a temporary folder this function made
 
 
+def sim_tests_pass(worktree, log):
+    '''run_sim_tests up to SIM_TEST_TRIES times; one clean run counts. log(report) for every run. Returns (passed, last report).'''
+    for _ in range(SIM_TEST_TRIES):
+        passed, report = run_sim_tests(worktree)
+        log(report)
+        if passed:
+            break
+    return passed, report
+
+
 class Builder(object):
     def __init__(self, announce):
         self._announce = announce  # announce(language, text): spoken by the car at its next poll
@@ -254,11 +264,7 @@ class Builder(object):
                 session = self._run_builder(prompt, session)
                 problems, feature = check_build(request['worktree'], base)
                 if not problems:
-                    for _ in range(SIM_TEST_TRIES):
-                        passed, report = run_sim_tests(request['worktree'])
-                        self._log(report)
-                        if passed:
-                            break
+                    passed, report = sim_tests_pass(request['worktree'], self._log)
                     if passed:
                         break
                     problems = ['simulation tests failed:', report]
