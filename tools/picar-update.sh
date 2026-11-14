@@ -11,7 +11,7 @@ HEALTH_TIMEOUT_S=90
 
 as_pi() { runuser -u pi -- "$@"; }
 
-say() {  # German, on the first USB speaker like events.audio_device (internal cards: events.INTERNAL_AUDIO_CARDS)
+say() {  # German, on the first USB speaker like alsa.usb_device (internal cards: alsa.INTERNAL_AUDIO_CARDS)
     speaker=$(aplay -l 2>/dev/null | sed -n 's/^card [0-9]*: \([A-Za-z0-9_]*\) \[.*\], device \([0-9]*\):.*/\1 \2/p' \
               | grep -v -e '^Headphones ' -e '^vc4hdmi ' | head -n 1 | sed 's/\(.*\) \(.*\)/plughw:CARD=\1,DEV=\2/')
     espeak-ng -v de -s 140 --stdout "$1" 2>/dev/null | aplay -q ${speaker:+-D "$speaker"} 2>/dev/null || true

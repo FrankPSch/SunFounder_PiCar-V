@@ -111,7 +111,7 @@ ACTIONS = {
     'room_name':    Action(lambda args: rooms.name_marker(args['id'], args.get('name', ''))),
     'room_goto':    Action(lambda args: rooms.goto(args['name']), moves=True),
     'room_cancel':  Action(lambda args: rooms.cancel()),
-    'treasure_next': Action(lambda args: tracker._next_treasure()),
+    'treasure_next': Action(lambda args: tracker.next_treasure()),
     'voice_server': Action(lambda args: switch_voice_server(args['action']), web=False),
     'help':         Action(lambda args: speak_help(args['language']), web=False),
 }

@@ -18,10 +18,10 @@ import threading
 import time
 import wave
 
-from . import alsa, events, features, listeners, word_recognizer
+from . import alsa, events, features, listeners, voice_protocol, word_recognizer
 from .conversation import conversation
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = voice_protocol.UTTERANCE_RATE
 SAMPLE_WIDTH = 2
 CHUNK_BYTES = SAMPLE_RATE // 10 * SAMPLE_WIDTH
 FULL_SCALE = 32768.0

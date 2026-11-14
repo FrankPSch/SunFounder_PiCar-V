@@ -6,13 +6,13 @@ import json
 import os
 import time
 
-from . import commands, events, features, speaker
+from . import commands, events, features, speaker, voice_protocol
 from .car import car
 from .commands import Kind
 from .conversation import conversation, SHORT_S
 from .voice_settings import parked_speech_dbfs, speech_dbfs, voice_languages
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = voice_protocol.UTTERANCE_RATE
 MIN_WORD_CONF = 0.8
 REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same phrase
 UNKNOWN = '[unk]'           # stands for speech outside the grammar

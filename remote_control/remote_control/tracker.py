@@ -140,7 +140,7 @@ class Tracker(object):
         if name in features.TRACKING_FEATURES + ('tracking_drive', 'treasure_hunt') and not is_on:
             car.stop('%s off' % name)
         if name == 'treasure_hunt' and is_on:
-            self._next_treasure()
+            self.next_treasure()
         if name == 'room_navigation' and not is_on:
             rooms.cancel('stopped (feature off)')
 
@@ -285,7 +285,7 @@ class Tracker(object):
             rooms.cancel('stopped: car seems blocked')
             events.add('vision', 'stuck: image did not change for %.1f s while driving - obstacle?' % STUCK_SECONDS, push=True)
 
-    def _next_treasure(self):
+    def next_treasure(self):
         previous = self.status['treasure']['color']
         self.status['treasure'].update(color=random.choice([c for c in COLOR_PRESETS if c != previous]), progress=0)
         color = self.status['treasure']['color']
@@ -294,14 +294,14 @@ class Tracker(object):
     def _treasure_step(self, frame):
         treasure = self.status['treasure']
         if not treasure['color']:
-            self._next_treasure()
+            self.next_treasure()
         target = self._detect_color(frame, treasure['color'])
         if target and target['radius_px'] >= TREASURE_MIN_RADIUS_PX and abs(target['x'] - 0.5) < 0.12 and abs(target['y'] - 0.5) < 0.12:
             treasure['progress'] += 1
             if treasure['progress'] >= TREASURE_FRAMES:
                 treasure['score'] += 1
                 events.add('treasure', 'found %s! score %d' % (treasure['color'], treasure['score']), say='well done')
-                self._next_treasure()
+                self.next_treasure()
         else:
             treasure['progress'] = 0
         return target

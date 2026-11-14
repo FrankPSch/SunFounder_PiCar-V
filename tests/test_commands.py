@@ -143,7 +143,7 @@ class CommandTest(unittest.TestCase):
             mock.patch.object(tracker, 'set_color', record('set_color')),
             mock.patch.object(tracker, 'teach', record('teach')),
             mock.patch.object(tracker, 'set_animal', record('set_animal')),
-            mock.patch.object(tracker, '_next_treasure', record('next_treasure')),
+            mock.patch.object(tracker, 'next_treasure', record('next_treasure')),
             mock.patch.object(commands, 'switch_voice_server', lambda action: self.calls.append('server ' + action)),
             mock.patch.object(conversation, 'start', lambda *args: self.calls.append('conversation start')),
             mock.patch.object(conversation, 'active', lambda: False),
