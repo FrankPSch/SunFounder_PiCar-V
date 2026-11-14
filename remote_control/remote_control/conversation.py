@@ -3,6 +3,8 @@ Claude conversation, the car's half (the PC's half is tools/voice_server.py, rea
 "hey claude" -> rising tone -> every sentence goes to the PC, its spoken answer plays on the car's speaker.
 Listening ends after IDLE_END_S without speech (falling tone). "hey claude, wie geht es dir" works in one breath.
 Steering stays on the car (audio.py): exact single phrases still steer and are not sent; words inside a sentence do not steer.
+Claude may switch features (reply field set_feature). While claude_voice is on, the car asks the PC every NEWS_POLL_S
+for announcements (a feature built by voice request is ready, installed, ...) and speaks them when nobody is talking.
 '''
 import collections
 import http.client
@@ -19,6 +21,7 @@ VOICE_SERVER = ('127.0.0.1', 8766)
 HEALTH_TIMEOUT_S = 2
 ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
+NEWS_POLL_S = 10
 SAMPLE_RATE = 16000
 SPEECH_DBFS = -42           # a chunk this loud counts as speech
 CHUNK_S = 0.1
@@ -59,6 +62,10 @@ def _car_status():
     return json.dumps(status)[:4000]
 
 
+def _car_features():
+    return json.dumps([[feature['name'], feature['on'], feature['help']] for feature in features.describe()])
+
+
 class Conversation(object):
     def __init__(self):
         self.status = {'state': 'off', 'transcript': None, 'reply': None, 'error': None, 'language': None}
@@ -71,6 +78,7 @@ class Conversation(object):
         self._speech_chunks = 0
         self._silent_chunks = 0
         self._last_sentence_s = 0.0
+        threading.Thread(target=self._poll_news, name='voice-news', daemon=True).start()
 
     def active(self):
         return time.time() < self._until or self._busy
@@ -172,11 +180,30 @@ class Conversation(object):
 
     def _exchange(self, sentence):
         connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
-        connection.request('POST', '/utterance?new=%d' % self._new, sentence, {'Content-Type': 'application/octet-stream', 'X-Car-Status': _car_status()})
+        connection.request('POST', '/utterance?new=%d' % self._new, sentence, {'Content-Type': 'application/octet-stream',
+                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features()})
         response = connection.getresponse()
         if response.status != 200:
             raise ValueError('HTTP %d' % response.status)
         self._new = False
+        self._play_reply(response)
+
+    def _poll_news(self):
+        while True:
+            time.sleep(NEWS_POLL_S)
+            if not features.enabled('claude_voice') or self.active() or self._sentence is not None or events.speaking.is_set():
+                continue
+            try:
+                connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
+                connection.request('GET', '/news')
+                response = connection.getresponse()
+                if response.status == 200:
+                    self._play_reply(response)
+            except (OSError, http.client.HTTPException, ValueError):
+                pass  # no voice server running: nothing to announce
+
+    def _play_reply(self, response):
+        '''Reads the server's frames: shows and logs the text, plays the audio, flips switches Claude asked for.'''
         speaker, speaker_open, reply = None, False, []
         try:
             while True:
@@ -197,6 +224,12 @@ class Conversation(object):
                         events.add('voice', 'claude: ' + fields['sentence'])
                     if 'error' in fields:
                         self.status['error'] = fields['error']
+                    if 'set_feature' in fields:
+                        try:
+                            features.set_enabled(fields['set_feature'], fields['on'])
+                            events.add('voice', 'claude switched %s %s' % (fields['set_feature'], 'on' if fields['on'] else 'off'))
+                        except KeyError as error:
+                            events.add('voice', 'claude: %s' % error)
                 elif kind == b'A':
                     if not speaker_open:
                         self.status['state'] = 'speaking'

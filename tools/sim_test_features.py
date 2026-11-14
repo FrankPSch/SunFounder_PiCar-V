@@ -1,6 +1,8 @@
 # Usage: start the server with PICAR_SIM=1 (see PiCar_Setup_Log.md), then: python tools/sim_test_features.py
 """Simulation checks for the second feature round: toggles, exclusivity, media, QR, markers/rooms, treasure hunt, audio status."""
+import ast
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -41,7 +43,10 @@ def enabled(current, name):
 
 
 names = [f['name'] for f in state()['features']]
-check('23 feature toggles registered', len(names), 23)
+FEATURES_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'remote_control', 'remote_control', 'features.py')
+registry = next(node.value for node in ast.walk(ast.parse(open(FEATURES_SOURCE, encoding='utf-8').read()))
+                if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'FEATURES')
+check('all toggles of the FEATURES registry served', names, [key.value for key in registry.keys])
 for name in names:
     if name not in ('watchdog', 'telemetry', 'power_warning', 'stuck_detection'):
         cmd('feature', name=name, on=False)

@@ -50,6 +50,8 @@ MIN_SPEECH_DBFS = -45       # loudest chunk of the last RECENT_CHUNKS must reach
 RECENT_CHUNKS = 20          # 2 s
 MIN_WORD_CONF = 0.8
 REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same word
+# "go" confirms a feature build in a conversation (tools/feature_builder.py), so there these do not drive: they go to Claude
+CONVERSATION_ONLY_PHRASES = ('go', 'los')
 AUDIO_FEATURES = ('sound_level', 'clap_stop', 'noise_alarm', 'stop_word', 'voice_commands', 'claude_voice')
 
 
@@ -106,6 +108,7 @@ VOICE_PHRASES = {
 }
 for _phrases in VOICE_PHRASES.values():
     assert set(_phrases.values()) == set(VOICE_COMMANDS), 'phrase list out of step with VOICE_COMMANDS'
+assert all(any(phrase in phrases for phrases in VOICE_PHRASES.values()) for phrase in CONVERSATION_ONLY_PHRASES)
 assert set(VOICE_PHRASES) == set(STOP_WORDS) == set(SPEECH_MODELS) == set(WAKE_PHRASES) == set(FAST_PHRASES)
 for _language, _fast in FAST_PHRASES.items():
     assert set(_fast) <= set(VOICE_PHRASES[_language]), 'fast phrase missing from the word list'
@@ -293,6 +296,8 @@ class Microphone(object):
             conversation.start(more_words_seconds)
             return
         command = VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') and not events.speaking.is_set() and not in_sentence else None
+        if command and text in CONVERSATION_ONLY_PHRASES and conversation.active():
+            return
         if command:
             now = time.time()
             conversation.discard_sentence()

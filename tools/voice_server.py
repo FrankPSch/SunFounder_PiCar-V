@@ -7,9 +7,12 @@ Start: tools\\voice_server.bat (needs the user variable ANTHROPIC_API_KEY; CLAUD
 Connection: the server listens on this PC's loopback only and opens an SSH tunnel, so the car reaches it at its own
 127.0.0.1:8766. No firewall rule, and nobody else on the network can use it.
 
-  GET  /health               {"model": ..., "whisper": ...}
-  POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, header X-Car-Status: JSON
+  GET  /health               {"model": ..., "whisper": ..., "build": ...}
+  POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...]
        reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
+       T fields: transcript + language, sentence, error, set_feature + on (the car flips that switch)
+  GET  /news                 announcements waiting for the car (build finished, ...), same frames; empty when none
+Feature requests by voice (propose -> "go" builds -> "deploy" installs): tools/feature_builder.py.
 '''
 import http.server
 import json
@@ -29,6 +32,8 @@ import anthropic
 import numpy as np
 from faster_whisper import WhisperModel
 
+import feature_builder
+
 CAR = 'pi@' + os.environ.get('PICAR_HOST', '192.168.178.131')
 SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')
 PORT = 8766
@@ -42,7 +47,7 @@ whisper_model = WhisperModel(WHISPER_SIZE, device='cuda', compute_type='int8_flo
 
 
 def _whisper(samples, language=None):
-    segments, info = whisper_model.transcribe(samples, language=language, beam_size=1, vad_filter=True, hotwords='Claude', condition_on_previous_text=False)
+    segments, info = whisper_model.transcribe(samples, language=language, beam_size=1, vad_filter=True, hotwords='Claude, go, deploy', condition_on_previous_text=False)
     return ' '.join(segment.text.strip() for segment in segments if segment.no_speech_prob < NOT_SPEECH_PROBABILITY), info.language
 
 
@@ -58,8 +63,8 @@ def transcribe(pcm):
 ## Claude
 MODEL = os.environ.get('CLAUDE_VOICE_MODEL', 'claude-opus-5-5')  # 'echo' repeats the sentence, for tests without an API key
 EFFORT = os.environ.get('CLAUDE_VOICE_EFFORT', 'low')  # empty for a model without the effort setting
-MAX_TOKENS = 1000
-MAX_HISTORY_MESSAGES = 40
+MAX_TOKENS = 4000           # thinking counts too
+MAX_HISTORY_MESSAGES = 80
 SENTENCE_END = re.compile(r'(?<=[.!?:;])\s+')
 SYSTEM_PROMPT = (
     'You are the voice of a small robot car (SunFounder PiCar-V) talking with its owner in the room. '
@@ -68,29 +73,79 @@ SYSTEM_PROMPT = (
     'What the owner says comes from speech recognition and can contain mistakes; go by the likely meaning. '
     'Each message starts with the current car status in square brackets. Mention it only when it matters. '
     'You can talk and read the status, but you cannot move the car: the owner steers with single spoken words such as '
-    '"links", "rechts", "los" and "stopp". Say so if asked to drive.')
+    '"links", "rechts", "vorwärts" and "stopp". Say so if asked to drive. '
+    'You can switch the car\'s features on and off with set_feature. Before switching on a feature that makes the car drive '
+    '(tracking_drive, room_navigation), ask once whether the car has room. '
+    'New features: when the owner asks for something the car cannot do yet, say in one or two sentences what you understood, '
+    'offer two or three short numbered options for how to build it, call propose_feature, and ask the owner to say "go" with '
+    'the number. Call start_build only after the owner said "go". When a build is ready and the owner says "deploy", '
+    'call deploy_feature. The status line tells you the state of the current feature request.')
 SPOKEN_ERROR = {'de': 'Ich kann Claude gerade nicht erreichen.', 'en': 'I cannot reach Claude right now.'}
 SPOKEN_REFUSAL = {'de': 'Dazu kann ich nichts sagen.', 'en': 'I cannot help with that.'}
 client = None if MODEL == 'echo' else anthropic.Anthropic()
+
+
+def _tool(name, description, properties, required):
+    return {'name': name, 'description': description, 'eager_input_streaming': True,
+            'input_schema': {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}}
+
+
+TOOLS = [
+    _tool('set_feature', 'Switch one of the car\'s features on or off. The names and current states are in the status line.',
+          {'name': {'type': 'string'}, 'on': {'type': 'boolean'}}, ['name', 'on']),
+    _tool('propose_feature', 'Save a new feature request with your understanding and the options, before asking for "go".',
+          {'title': {'type': 'string', 'description': 'two to five words'}, 'understanding': {'type': 'string'},
+           'options': {'type': 'array', 'items': {'type': 'string'}, 'description': 'two or three ways to build it'}},
+          ['title', 'understanding', 'options']),
+    _tool('start_build', 'Build the proposed feature. Only after the owner said "go".',
+          {'option': {'type': 'string', 'description': 'the option the owner chose, in full'}}, ['option']),
+    _tool('deploy_feature', 'Install the built feature on the car. Only after the owner said "deploy".', {}, []),
+]
+TOOL_TYPES = {tool['name']: {key: value['type'] for key, value in tool['input_schema']['properties'].items()} for tool in TOOLS}
+JSON_TYPES = {'string': str, 'boolean': bool, 'array': list}
 
 
 class Refused(Exception):
     pass
 
 
-def claude_sentences(messages):
+def _valid(name, arguments):
+    '''Tool input streams unchecked (eager_input_streaming): check it here before running the tool.'''
+    types = TOOL_TYPES.get(name)
+    return (types is not None and isinstance(arguments, dict) and set(arguments) == set(types)
+            and all(isinstance(arguments[key], JSON_TYPES[kind]) for key, kind in types.items()))
+
+
+def claude_sentences(turn, run_tool):
+    '''Streams Claude's answer sentence by sentence; runs the tools it calls and goes on until it is done.
+    turn: history + this turn's user message; every new message is appended to it.'''
     options = {'output_config': {'effort': EFFORT}} if EFFORT else {}
-    with client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, messages=messages, **options) as stream:
-        unfinished = ''
-        for text in stream.text_stream:
-            parts = SENTENCE_END.split(unfinished + text)
-            unfinished = parts.pop()
-            for sentence in parts:
-                yield sentence
-        if unfinished.strip():
-            yield unfinished
-        if stream.get_final_message().stop_reason == 'refusal':
+    while True:
+        with client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, messages=turn, tools=TOOLS,
+                                    cache_control={'type': 'ephemeral'}, **options) as stream:
+            unfinished = ''
+            for text in stream.text_stream:
+                parts = SENTENCE_END.split(unfinished + text)
+                unfinished = parts.pop()
+                for sentence in parts:
+                    yield sentence
+            if unfinished.strip():
+                yield unfinished
+            message = stream.get_final_message()
+        if message.stop_reason == 'refusal':
             raise Refused()
+        turn.append({'role': 'assistant', 'content': message.content})
+        if message.stop_reason != 'tool_use':  # max_tokens with a cut-off tool call: do not run it
+            return
+        results = []
+        for block in message.content:
+            if block.type == 'tool_use':
+                if _valid(block.name, block.input):
+                    results.append({'type': 'tool_result', 'tool_use_id': block.id, 'content': run_tool(block.name, block.input)})
+                else:
+                    results.append({'type': 'tool_result', 'tool_use_id': block.id, 'is_error': True,
+                                    'content': json.dumps({'INVALID_JSON': json.dumps(block.input)})})
+        turn.append({'role': 'user', 'content': results})
 
 
 ## Text to speech
@@ -102,7 +157,8 @@ for _voice in VOICES.values():
         assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
 
 
-SPEECH_DIR = os.path.join(VOICE_DIR, 'tmp')
+SPEECH_DIR = os.path.join(feature_builder.WORK_DIR, 'tmp')  # not on D:, which ran full
+os.makedirs(SPEECH_DIR, exist_ok=True)
 piper_processes = {}
 
 
@@ -125,9 +181,20 @@ def synthesize(sentence, language):
 ## One conversation: the car has one microphone
 history = []
 history_lock = threading.Lock()
+news = []                   # (language, sentence) for the car's next GET /news
+news_lock = threading.Lock()
 
 
-def answer(pcm, new_conversation, car_status, send_text, send_audio):
+def announce(language, sentence):
+    print('%s news: %s' % (time.strftime('%H:%M:%S'), sentence), flush=True)
+    with news_lock:
+        news.append((language, sentence))
+
+
+builder = feature_builder.Builder(announce)
+
+
+def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio):
     started = time.time()
     with history_lock:
         if new_conversation:
@@ -143,16 +210,37 @@ def answer(pcm, new_conversation, car_status, send_text, send_audio):
             send_text({'sentence': sentence})
             send_audio(synthesize(sentence, language))
 
+        def run_tool(name, arguments):
+            print('  tool %s %s' % (name, json.dumps(arguments, ensure_ascii=False)[:300]), flush=True)
+            if name == 'set_feature':
+                known = [feature[0] for feature in car_features]
+                if arguments['name'] not in known:
+                    return 'Unknown feature. Known: ' + ', '.join(known)
+                send_text({'set_feature': arguments['name'], 'on': arguments['on']})
+                return 'Switched %s %s.' % (arguments['name'], 'on' if arguments['on'] else 'off')
+            if name == 'propose_feature':
+                return builder.propose(arguments['title'], arguments['understanding'], arguments['options'], language)
+            if name == 'start_build':
+                return builder.start(arguments['option'], transcript)
+            return builder.deploy(transcript)
+
         spoken = []
         try:
-            sentences = iter([transcript]) if client is None else claude_sentences(history + [{'role': 'user', 'content': '[%s]\n%s' % (car_status, transcript)}])
-            for sentence in sentences:
-                if not spoken:
-                    print('  first sentence after %.2f s' % (time.time() - started), flush=True)
-                say(sentence)
-                spoken.append(sentence)
-            history.extend(({'role': 'user', 'content': transcript}, {'role': 'assistant', 'content': ' '.join(spoken)}))
-            del history[:-MAX_HISTORY_MESSAGES]
+            if client is None:
+                say(transcript)
+                spoken.append(transcript)
+            else:
+                switches = '; '.join('%s=%s (%s)' % (name, 'on' if on else 'off', help_text) for name, on, help_text in car_features)
+                status = '[car: %s]\n[switches: %s]\n[%s]\n' % (car_status, switches, builder.describe())
+                turn = history + [{'role': 'user', 'content': status + transcript}]
+                for sentence in claude_sentences(turn, run_tool):
+                    if not spoken:
+                        print('  first sentence after %.2f s' % (time.time() - started), flush=True)
+                    say(sentence)
+                    spoken.append(sentence)
+                history[:] = turn  # append-only, so the thinking blocks in it stay valid
+                while len(history) > MAX_HISTORY_MESSAGES or (history and not isinstance(history[0]['content'], str)):
+                    del history[0]
         except Refused:
             say(SPOKEN_REFUSAL[language])
         except anthropic.AnthropicError as error:
@@ -169,7 +257,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        body = json.dumps({'model': MODEL, 'whisper': WHISPER_SIZE}).encode('ascii')
+        if self.path == '/news':
+            with news_lock:
+                waiting, news[:] = list(news), []
+            self.send_response(200)
+            self.end_headers()
+            try:
+                for language, sentence in waiting:
+                    self._frame(b'T', json.dumps({'sentence': sentence}).encode('ascii'))
+                    self._frame(b'A', synthesize(sentence, language))
+            except OSError as error:
+                print('  car went away during news:', error, flush=True)
+            return
+        body = json.dumps({'model': MODEL, 'whisper': WHISPER_SIZE, 'build': builder.describe()}).encode('ascii')
         self.send_response(200 if self.path == '/health' else 404)
         self.end_headers()
         self.wfile.write(body)
@@ -185,7 +285,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         try:
             answer(pcm, urllib.parse.parse_qs(url.query).get('new') == ['1'], self.headers.get('X-Car-Status', ''),
-                   lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')), lambda audio: self._frame(b'A', audio))
+                   json.loads(self.headers.get('X-Car-Features') or '[]'), lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')), lambda audio: self._frame(b'A', audio))
         except OSError as error:
             print('  car went away:', error, flush=True)
 
