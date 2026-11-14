@@ -18,6 +18,7 @@ Connection: the server listens on this PC's loopback only and opens an SSH tunne
 Feature requests by voice (propose -> "go" builds -> "deploy" installs): tools/feature_builder.py.
 Started and stopped with the car by tools/voice_launcher.py; starting it by hand still works.
 '''
+import audioop
 import http.server
 import json
 import os
@@ -163,17 +164,19 @@ def claude_sentences(turn, run_tool):
 
 
 ## Text to speech
-VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}
+# VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}  # 16 kHz, but buzzy and hard to follow (owner, 2026-11-14)
+VOICES = {'de': 'de_DE-thorsten-medium', 'en': 'en_US-lessac-medium'}  # 22.05 kHz, resampled for the car
+CAR_SAMPLE_RATE = 16000
 GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude", instead of a tone
 assert set(GREETINGS) == set(LANGUAGES)
 PIPER = os.path.join(VOICE_DIR, 'piper', 'piper', 'piper.exe')
-# 1.0 = Piper's own pace, too fast to follow on the car's speaker; 1.3 still too fast (owner, 2026-11-14), and only 12 % longer
-SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.6')
+# 1.0 = Piper's own pace. It sounded far too fast only because the Jabra played 16 kHz at 48 kHz (events.PLAYBACK_RATE)
+SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.0')
 SENTENCE_PAUSE_S = '0.4'
 assert set(VOICES) == set(LANGUAGES)
-for _voice in VOICES.values():
-    with open(os.path.join(VOICE_DIR, 'piper', _voice + '.onnx.json'), encoding='utf-8') as _config:
-        assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
+# for _voice in VOICES.values():  # the voices are resampled now
+#     with open(os.path.join(VOICE_DIR, 'piper', _voice + '.onnx.json'), encoding='utf-8') as _config:
+#         assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
 
 
 SPEECH_DIR = os.path.join(feature_builder.WORK_DIR, 'tmp')
@@ -193,8 +196,10 @@ def synthesize(sentence, language):
     process.stdin.flush()
     path = process.stdout.readline().decode('utf-8').strip()
     with wave.open(path, 'rb') as speech:
-        audio = speech.readframes(speech.getnframes())
+        audio, rate = speech.readframes(speech.getnframes()), speech.getframerate()
     os.remove(path)
+    if rate != CAR_SAMPLE_RATE:  # the car plays 16 kHz only
+        audio = audioop.ratecv(audio, 2, 1, rate, CAR_SAMPLE_RATE, None)[0]
     return audio
 
 

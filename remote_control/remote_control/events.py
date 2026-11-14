@@ -4,6 +4,7 @@ Event log shown on the dashboard, plus optional phone push and voice prompts.
   puts {"ntfy_topic": "..."} into DATA_DIR/settings.json.
 - Voice prompts (feature voice_prompts): espeak-ng on the first USB speaker (e.g. Jabra), else the Pi's default output.
 '''
+import audioop
 import collections
 import json
 import os
@@ -22,6 +23,9 @@ speaking = threading.Event()
 INTERNAL_AUDIO_CARDS = ('Headphones', 'vc4hdmi')
 PROMPT_ECHO_S = 0.5
 SPEAKER_DRAIN_S = 120
+# The Jabra SPEAK 510 plays 16 kHz audio 3x too fast while its mic records (2 s played in 0.77 s, measured
+# 2026-11-14), 48 kHz at the right speed: write_speaker converts to this rate.
+PLAYBACK_RATE = 48000
 
 
 def settings():
@@ -82,14 +86,22 @@ def _say(text):
             speaking.clear()
 
 
+class _Player(object):
+    '''aplay at PLAYBACK_RATE, fed audio converted from the caller's rate.'''
+    def __init__(self, process, sample_rate):
+        self.process, self.sample_rate, self.convert_state = process, sample_rate, None
+        self.stdin, self.poll, self.wait, self.kill = process.stdin, process.poll, process.wait, process.kill
+
+
 def open_speaker(sample_rate):
     '''Raw 16-bit mono audio for write_speaker. Holds the speech lock and marks the car as speaking until close_speaker.'''
     _speech_lock.acquire()
     speaking.set()
     speaker = audio_device('aplay')
     try:
-        return subprocess.Popen(['aplay', '-q', '-t', 'raw', '-f', 'S16_LE', '-c', '1', '-r', str(sample_rate)] + (['-D', speaker] if speaker else []),
-                                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(['aplay', '-q', '-t', 'raw', '-f', 'S16_LE', '-c', '1', '-r', str(PLAYBACK_RATE)] + (['-D', speaker] if speaker else []),
+                                   stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return _Player(process, sample_rate)
     except OSError as error:
         print('event: no speaker: %s' % error)
         return None
@@ -98,6 +110,8 @@ def open_speaker(sample_rate):
 def write_speaker(player, audio):
     if player is not None and player.poll() is None:
         try:
+            if player.sample_rate != PLAYBACK_RATE:
+                audio, player.convert_state = audioop.ratecv(audio, 2, 1, player.sample_rate, PLAYBACK_RATE, player.convert_state)
             player.stdin.write(audio)
             player.stdin.flush()
         except OSError as error:
