@@ -8,7 +8,8 @@ Connection: the server listens on this PC's loopback only and opens an SSH tunne
 127.0.0.1:8766. No firewall rule, and nobody else on the network can use it.
 
   GET  /health               {"model": ..., "whisper": ..., "build": ...}
-  POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...]
+  POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...],
+                             X-Car-Languages: "de" or "de,en" (one language: Whisper does not detect)
        reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
        T fields: transcript + language, sentence, error, set_feature + on (the car flips that switch)
   GET  /news                 announcements waiting for the car (build finished, ...), same frames; empty when none
@@ -54,13 +55,15 @@ def _whisper(samples, language=None, initial_prompt=None):
     return ' '.join(segment.text.strip() for segment in segments if segment.no_speech_prob < NOT_SPEECH_PROBABILITY), info.language
 
 
-def transcribe(pcm, gate=None):
+def transcribe(pcm, gate=None, languages=LANGUAGES):
     '''gate: (pattern, example) when a word is awaited ("go", "deploy"). A German "go" often comes out as "Co." or "Boom";
-    a second German pass primed with the example hears it (measured: every "go" phrase found, "Cool"/"Gut" not taken).'''
+    a second German pass primed with the example hears it (measured: every "go" phrase found, "Cool"/"Gut" not taken).
+    languages: the car's setting voice_languages; with one language Whisper does not guess (it took the owner's
+    "Wie geht es dir?" for English "You get to do that?", 2026-11-14).'''
     samples = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
-    text, language = _whisper(samples)
-    if language not in LANGUAGES:  # short sentences are sometimes taken for a third language
-        language = LANGUAGES[0]
+    text, language = _whisper(samples, languages[0] if len(languages) == 1 else None)
+    if language not in languages:  # short sentences are sometimes taken for a third language
+        language = languages[0]
         text, _ = _whisper(samples, language)
     if gate and text and not gate[0].search(text):
         primed, _ = _whisper(samples, 'de', gate[1])
@@ -203,12 +206,12 @@ def announce(language, sentence):
 builder = feature_builder.Builder(announce)
 
 
-def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio):
+def answer(pcm, new_conversation, car_status, car_features, send_text, send_audio, car_languages=LANGUAGES):
     started = time.time()
     with history_lock:
         if new_conversation:
             del history[:]
-        transcript, language = transcribe(pcm, feature_builder.AWAITED_WORD.get(builder.state))
+        transcript, language = transcribe(pcm, feature_builder.AWAITED_WORD.get(builder.state), car_languages)
         heard_at = time.time()
         send_text({'transcript': transcript, 'language': language})
         print('%s heard (%.2f s for %.1f s, %s): %s' % (time.strftime('%H:%M:%S'), heard_at - started, len(pcm) / 32000.0, language, transcript), flush=True)
@@ -303,9 +306,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pcm = self.rfile.read(int(self.headers['Content-Length']))
         self.send_response(200 if url.path == '/utterance' else 404)
         self.end_headers()
+        car_languages = tuple(name for name in (self.headers.get('X-Car-Languages') or '').split(',') if name in LANGUAGES) or LANGUAGES
         try:
             answer(pcm, urllib.parse.parse_qs(url.query).get('new') == ['1'], self.headers.get('X-Car-Status', ''),
-                   json.loads(self.headers.get('X-Car-Features') or '[]'), lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')), lambda audio: self._frame(b'A', audio))
+                   json.loads(self.headers.get('X-Car-Features') or '[]'), lambda fields: self._frame(b'T', json.dumps(fields).encode('ascii')),
+                   lambda audio: self._frame(b'A', audio), car_languages)
         except OSError as error:
             print('  car went away:', error, flush=True)
 

@@ -22,12 +22,13 @@ from .car import car
 VOICE_SERVER = ('127.0.0.1', 8766)
 LAUNCHER = ('127.0.0.1', 8767)
 SERVER_READY_S = 90         # Whisper and Piper warm up on the PC
+DEFAULT_VOICE_LANGUAGES = 'de'
 HEALTH_TIMEOUT_S = 2
 ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
 NEWS_POLL_S = 10
 SAMPLE_RATE = 16000
-SPEECH_DBFS = -42           # a chunk this loud counts as speech
+SPEECH_DBFS = -55           # a chunk this loud counts as speech; owner's normal voice -45..-58, room -68.7 (measured 2026-11-14)
 CHUNK_S = 0.1
 PRE_ROLL_CHUNKS = 3         # the chunks before the level rose: the start of the first word
 END_SILENCE_CHUNKS = 7
@@ -64,6 +65,11 @@ def _car_status():
     status = dict(car.state())
     status.update({name: value for name, value in telemetry.latest.items() if isinstance(value, (int, float, str))})
     return json.dumps(status)[:4000]
+
+
+def voice_languages():
+    '''Setting voice_languages ("de", "de,en"): the word recognisers on the car, and the languages Whisper may pick on the PC.'''
+    return [name.strip() for name in str(events.settings().get('voice_languages', DEFAULT_VOICE_LANGUAGES)).split(',') if name.strip()]
 
 
 def _car_features():
@@ -185,7 +191,7 @@ class Conversation(object):
     def _exchange(self, sentence):
         connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
         connection.request('POST', '/utterance?new=%d' % self._new, sentence, {'Content-Type': 'application/octet-stream',
-                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features()})
+                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features(), 'X-Car-Languages': ','.join(voice_languages())})
         response = connection.getresponse()
         if response.status != 200:
             raise ValueError('HTTP %d' % response.status)

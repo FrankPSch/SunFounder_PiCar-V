@@ -25,7 +25,7 @@ import wave
 
 from . import events, features
 from .car import car
-from .conversation import conversation, SHORT_S
+from .conversation import conversation, voice_languages, SHORT_S
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = SAMPLE_RATE // 10 * 2
@@ -47,10 +47,10 @@ SERVER_PHRASES = {'en': {'start claude': 'start', 'stop claude': 'stop'},
 # Act on these as soon as they are heard, without waiting for the end of the phrase. Only steering: a wrong one just
 # turns the wheels; words that make the car drive still need the full check on the final result.
 FAST_PHRASES = {'en': ('left', 'right', 'straight'), 'de': ('links', 'rechts', 'geradeaus')}
-DEFAULT_VOICE_LANGUAGES = 'de'
+# DEFAULT_VOICE_LANGUAGES = 'de'  # moved to conversation.py: the PC's Whisper uses the same setting
 # A grammar-limited recogniser maps room noise onto its nearest word ("halt" twice a minute at -63 dBFS),
 # so a word only counts when it was loud enough and the recogniser is sure. Rejected words: status['rejected'].
-MIN_SPEECH_DBFS = -45       # loudest chunk of the last RECENT_CHUNKS must reach this
+MIN_SPEECH_DBFS = -55       # loudest chunk of the last RECENT_CHUNKS must reach this; owner's normal voice peaks -45..-50 (2026-11-14)
 RECENT_CHUNKS = 20          # 2 s
 MIN_WORD_CONF = 0.8
 REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same word
@@ -239,7 +239,7 @@ class Microphone(object):
         if word_list is None:
             self.status['languages'] = []
             return []
-        languages = [name.strip() for name in str(events.settings().get('voice_languages', DEFAULT_VOICE_LANGUAGES)).split(',')]
+        languages = voice_languages()
         recognizers = []
         try:
             import vosk
