@@ -164,7 +164,7 @@ for _voice in VOICES.values():
         assert json.load(_config)['audio']['sample_rate'] == 16000, 'the car plays 16 kHz only: ' + _voice
 
 
-SPEECH_DIR = os.path.join(feature_builder.WORK_DIR, 'tmp')  # not on D:, which ran full
+SPEECH_DIR = os.path.join(feature_builder.WORK_DIR, 'tmp')
 os.makedirs(SPEECH_DIR, exist_ok=True)
 piper_processes = {}
 

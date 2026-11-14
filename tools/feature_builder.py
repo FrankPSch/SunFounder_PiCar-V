@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.request
 
-WORK_DIR = os.environ.get('PICAR_WORK_DIR', r'C:\Users\Frank\PiCar_work')
+WORK_DIR = os.environ.get('PICAR_WORK_DIR', r'D:\a_ClaudeCowork\PiCar\voice')
 REPO = os.path.join(WORK_DIR, 'repo')
 BUILDS = os.path.join(WORK_DIR, 'builds')
 SIM_PYTHON = os.path.join(WORK_DIR, 'simenv', 'Scripts', 'python.exe')
