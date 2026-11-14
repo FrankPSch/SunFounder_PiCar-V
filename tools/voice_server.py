@@ -8,6 +8,7 @@ Connection: the server listens on this PC's loopback only and opens an SSH tunne
 127.0.0.1:8766. No firewall rule, and nobody else on the network can use it.
 
   GET  /health               {"model": ..., "whisper": ..., "build": ...}
+  GET  /hello?language=de    the spoken greeting after "hey claude", same frames as below
   POST /utterance?new=0|1    body: 16 kHz mono 16-bit audio, headers X-Car-Status: JSON, X-Car-Features: [[name, on, help], ...],
                              X-Car-Languages: "de" or "de,en" (one language: Whisper does not detect)
        reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
@@ -35,10 +36,11 @@ import anthropic
 import numpy as np
 from faster_whisper import WhisperModel
 
+import car_tunnel
 import feature_builder
 
 CAR = 'pi@' + os.environ.get('PICAR_HOST', '192.168.178.131')
-SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')
+# SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')  # now car_tunnel.SSH_KEY
 PORT = 8766
 TUNNEL_RETRY_S = 5
 
@@ -162,8 +164,11 @@ def claude_sentences(turn, run_tool):
 
 ## Text to speech
 VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}
+GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude", instead of a tone
+assert set(GREETINGS) == set(LANGUAGES)
 PIPER = os.path.join(VOICE_DIR, 'piper', 'piper', 'piper.exe')
-SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.3')  # 1.0 = Piper's own pace, too fast to follow on the car's speaker
+# 1.0 = Piper's own pace, too fast to follow on the car's speaker; 1.3 still too fast (owner, 2026-11-14), and only 12 % longer
+SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.6')
 SENTENCE_PAUSE_S = '0.4'
 assert set(VOICES) == set(LANGUAGES)
 for _voice in VOICES.values():
@@ -272,6 +277,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        if url.path == '/hello':
+            language = (urllib.parse.parse_qs(url.query).get('language') or [LANGUAGES[0]])[0]
+            language = language if language in GREETINGS else LANGUAGES[0]
+            self.send_response(200)
+            self.end_headers()
+            self._frame(b'T', json.dumps({'sentence': GREETINGS[language]}).encode('ascii'))
+            self._frame(b'A', synthesize(GREETINGS[language], language))
+            return
         if self.path == '/news':
             with news_lock:
                 waiting, news[:] = list(news), []
@@ -318,14 +332,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             print('  car went away:', error, flush=True)
 
 
+# def keep_tunnel_open():  # now car_tunnel.keep_open, which also frees a port held by a dead connection
+#     command = ['ssh', '-N', '-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
+#                '-o', 'ServerAliveCountMax=2', '-R', '%d:127.0.0.1:%d' % (PORT, PORT), CAR]
+#     while True:
+#         print('tunnel to', CAR, flush=True)
+#         subprocess.run(command)
+#         print('tunnel closed, next try in %d s' % TUNNEL_RETRY_S, flush=True)
+#         time.sleep(TUNNEL_RETRY_S)
 def keep_tunnel_open():
-    command = ['ssh', '-N', '-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
-               '-o', 'ServerAliveCountMax=2', '-R', '%d:127.0.0.1:%d' % (PORT, PORT), CAR]
-    while True:
-        print('tunnel to', CAR, flush=True)
-        subprocess.run(command)
-        print('tunnel closed, next try in %d s' % TUNNEL_RETRY_S, flush=True)
-        time.sleep(TUNNEL_RETRY_S)
+    car_tunnel.keep_open(CAR, PORT, TUNNEL_RETRY_S, lambda text: print(time.strftime('%H:%M:%S'), text, flush=True))
 
 
 if __name__ == '__main__':

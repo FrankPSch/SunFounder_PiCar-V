@@ -39,7 +39,7 @@ CO_AUTHOR = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 FEATURES_FILE = 'remote_control/remote_control/features.py'
 AUDIO_FILE = 'remote_control/remote_control/audio.py'
 PROTECTED = ('tools/deploy.sh', 'tools/picar-update.sh', 'tools/systemd/', 'tools/voice_server.py', 'tools/voice_server.bat',
-             'tools/feature_builder.py', 'tools/voice_launcher.py', 'tools/install_voice_launcher.bat')
+             'tools/feature_builder.py', 'tools/voice_launcher.py', 'tools/car_tunnel.py','tools/install_voice_launcher.bat')
 GO = re.compile(r'\b(go+m?|goh|gou)\b', re.IGNORECASE)  # Whisper also writes a German "go" as "Goom"
 DEPLOY = re.compile(r'd[ei]e?p?l(oy|oi|eu|ey)', re.IGNORECASE)
 AWAITED_WORD = {'proposed': (GO, 'Go, Option eins.'), 'built': (DEPLOY, 'Deploy.')}  # state -> (pattern, Whisper priming)

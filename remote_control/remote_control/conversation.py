@@ -1,6 +1,6 @@
 '''
 Claude conversation, the car's half (the PC's half is tools/voice_server.py, reached through its SSH tunnel).
-"hey claude" -> rising tone -> every sentence goes to the PC, its spoken answer plays on the car's speaker.
+"hey claude" -> the PC says "Hallo" -> every sentence goes to the PC, its spoken answer plays on the car's speaker.
 Listening ends after IDLE_END_S without speech (falling tone). "hey claude, wie geht es dir" works in one breath.
 Steering stays on the car (audio.py): exact single phrases still steer and are not sent; words inside a sentence do not steer.
 Claude may switch features (reply field set_feature). While claude_voice is on, the car asks the PC every NEWS_POLL_S
@@ -125,11 +125,16 @@ class Conversation(object):
 
     def _open(self):
         try:
-            connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S)
-            connection.request('GET', '/health')
-            connection.getresponse().read()
-            _play(_tone(TONE_START))
-        except OSError as error:
+            connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S * 3)
+            connection.request('GET', '/hello?language=' + voice_languages()[0])
+            response = connection.getresponse()
+            if response.status != 200:  # a voice server from before /hello
+                response.read()
+                _play(_tone(TONE_START))
+            else:
+                self._play_reply(response)
+                self.status['state'] = 'listening'
+        except (OSError, http.client.HTTPException, ValueError) as error:
             self._failed('voice server not reachable (%s)' % error)
 
     def _failed(self, text):
