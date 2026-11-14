@@ -163,6 +163,8 @@ def claude_sentences(turn, run_tool):
 ## Text to speech
 VOICES = {'de': 'de_DE-thorsten-low', 'en': 'en_US-lessac-low'}
 PIPER = os.path.join(VOICE_DIR, 'piper', 'piper', 'piper.exe')
+SPEECH_SLOWER = os.environ.get('PIPER_LENGTH_SCALE', '1.3')  # 1.0 = Piper's own pace, too fast to follow on the car's speaker
+SENTENCE_PAUSE_S = '0.4'
 assert set(VOICES) == set(LANGUAGES)
 for _voice in VOICES.values():
     with open(os.path.join(VOICE_DIR, 'piper', _voice + '.onnx.json'), encoding='utf-8') as _config:
@@ -179,7 +181,8 @@ def synthesize(sentence, language):
     process = piper_processes.get(language)
     if process is None or process.poll() is not None:
         process = piper_processes[language] = subprocess.Popen(
-            [PIPER, '--model', os.path.join(VOICE_DIR, 'piper', VOICES[language] + '.onnx'), '--output_dir', SPEECH_DIR],
+            [PIPER, '--model', os.path.join(VOICE_DIR, 'piper', VOICES[language] + '.onnx'), '--output_dir', SPEECH_DIR,
+             '--length_scale', SPEECH_SLOWER, '--sentence_silence', SENTENCE_PAUSE_S],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     process.stdin.write((' '.join(sentence.replace('*', ' ').split()) + '\n').encode('utf-8'))
     process.stdin.flush()

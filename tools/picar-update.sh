@@ -11,6 +11,12 @@ HEALTH_TIMEOUT_S=90
 
 as_pi() { runuser -u pi -- "$@"; }
 
+say() {  # German, on the first USB speaker like events.audio_device (internal cards: events.INTERNAL_AUDIO_CARDS)
+    speaker=$(aplay -l 2>/dev/null | sed -n 's/^card [0-9]*: \([A-Za-z0-9_]*\) \[.*\], device \([0-9]*\):.*/\1 \2/p' \
+              | grep -v -e '^Headphones ' -e '^vc4hdmi ' | head -n 1 | sed 's/\(.*\) \(.*\)/plughw:CARD=\1,DEV=\2/')
+    espeak-ng -v de -s 140 --stdout "$1" 2>/dev/null | aplay -q ${speaker:+-D "$speaker"} 2>/dev/null || true
+}
+
 write_status() {  # result, from, to, message
     mkdir -p "$(dirname "$STATUS_FILE")"
     printf '{"time": "%s", "branch": "%s", "result": "%s", "from": "%s", "to": "%s", "message": "%s"}\n' \
@@ -39,15 +45,21 @@ fi
 if ! as_pi git checkout -q --detach "$new_commit"; then
     write_status checkout-failed "$old_commit" "$new_commit" "local changes in the work tree?"; exit 1
 fi
-systemctl restart picar
+systemctl stop picar  # frees the speaker
+say "Update startet. Ich bin gleich wieder da."
+systemctl start picar
 if wait_healthy; then
-    write_status updated "$old_commit" "$new_commit" ""; exit 0
+    write_status updated "$old_commit" "$new_commit" ""
+    say "Update fertig."
+    exit 0
 fi
 as_pi git checkout -q --detach "$old_commit"
 systemctl restart picar
 if wait_healthy; then
     write_status rolled-back "$old_commit" "$new_commit" "new commit not healthy within ${HEALTH_TIMEOUT_S}s"
+    say "Update fehlgeschlagen. Die alte Version läuft wieder."
 else
     write_status broken "$old_commit" "$new_commit" "rollback also unhealthy - check journalctl -u picar"
+    say "Update fehlgeschlagen. Ich laufe nicht mehr richtig."
 fi
 exit 1

@@ -28,7 +28,10 @@ ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
 NEWS_POLL_S = 10
 SAMPLE_RATE = 16000
-SPEECH_DBFS = -55           # a chunk this loud counts as speech; owner's normal voice -45..-58, room -68.7 (measured 2026-11-14)
+# SPEECH_DBFS = -55  # one value for parked and driving, mic gain 4/7 (2026-11-14 noon)
+# A chunk this loud counts as speech. Measured 2026-11-14, Jabra mic gain 7/7 (audio.MIC_MIXERS): room -59..-60, owner's
+# voice -22..-36 parked; motor -24..-29 while driving, voice on top -18..-21.
+SPEECH_DBFS = {'parked': -48, 'driving': -22}
 CHUNK_S = 0.1
 PRE_ROLL_CHUNKS = 3         # the chunks before the level rose: the start of the first word
 END_SILENCE_CHUNKS = 7
@@ -65,6 +68,11 @@ def _car_status():
     status = dict(car.state())
     status.update({name: value for name, value in telemetry.latest.items() if isinstance(value, (int, float, str))})
     return json.dumps(status)[:4000]
+
+
+def speech_dbfs():
+    '''Level at which a chunk counts as speech: much higher while the motor runs.'''
+    return SPEECH_DBFS['driving' if car.drive_direction else 'parked']
 
 
 def voice_languages():
@@ -149,13 +157,13 @@ class Conversation(object):
             self._sentence = None
             return
         if self._sentence is None:
-            if level < SPEECH_DBFS:
+            if level < speech_dbfs():
                 return
             pre_roll = list(self._rolling)[-PRE_ROLL_CHUNKS:]
             self._sentence, self._speech_chunks, self._silent_chunks, self._discard = bytearray(b''.join(pre_roll)), 0, 0, False
             return
         self._sentence += chunk
-        if level >= SPEECH_DBFS:
+        if level >= speech_dbfs():
             self._speech_chunks, self._silent_chunks = self._speech_chunks + 1, 0
         else:
             self._silent_chunks += 1

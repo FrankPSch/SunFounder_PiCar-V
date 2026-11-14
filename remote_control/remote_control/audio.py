@@ -25,11 +25,14 @@ import wave
 
 from . import events, features
 from .car import car
-from .conversation import conversation, voice_languages, SHORT_S
+from .conversation import conversation, speech_dbfs, voice_languages, SHORT_S, SPEECH_DBFS
 
 SAMPLE_RATE = 16000
 CHUNK_BYTES = SAMPLE_RATE // 10 * 2
-OLD_MIC_MIXER = ['amixer', '-q', '-c', 'Device', 'sset', 'Mic', '100%']  # old USB mic: capture volume boots at 0 % (peak 55 of 32767 measured)
+# OLD_MIC_MIXER = ['amixer', '-q', '-c', 'Device', 'sset', 'Mic', '100%']  # now MIC_MIXERS['Device']
+# Capture gain set before each recording start, by ALSA card name:
+MIC_MIXERS = {'Device': ['Mic', '100%'],      # old USB mic: capture volume boots at 0 % (peak 55 of 32767 measured)
+              'USB': ['Headset', '100%']}     # Jabra SPEAK 510: boots at 4/7; 7/7 = +9 dB, the thresholds are measured with it
 SPEECH_MODELS = {language: os.path.join(features.DATA_DIR, 'models', folder)
                  for language, folder in (('en', 'vosk-model-small-en-us-0.15'), ('de', 'vosk-model-small-de-0.15'))}
 
@@ -50,7 +53,9 @@ FAST_PHRASES = {'en': ('left', 'right', 'straight'), 'de': ('links', 'rechts', '
 # DEFAULT_VOICE_LANGUAGES = 'de'  # moved to conversation.py: the PC's Whisper uses the same setting
 # A grammar-limited recogniser maps room noise onto its nearest word ("halt" twice a minute at -63 dBFS),
 # so a word only counts when it was loud enough and the recogniser is sure. Rejected words: status['rejected'].
-MIN_SPEECH_DBFS = -55       # loudest chunk of the last RECENT_CHUNKS must reach this; owner's normal voice peaks -45..-50 (2026-11-14)
+# MIN_SPEECH_DBFS = -55  # one value, mic gain 4/7; now conversation.speech_dbfs(), parked or driving (2026-11-14)
+# The loudest chunk of the last RECENT_CHUNKS must reach conversation.speech_dbfs(). Stop words use the parked value
+# even while driving: a stop on motor noise does no harm, a missed stop does.
 RECENT_CHUNKS = 20          # 2 s
 MIN_WORD_CONF = 0.8
 REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same word
@@ -161,8 +166,9 @@ class Microphone(object):
                 self.status.update(running=False, error='no microphone found')
                 time.sleep(5)
                 continue
-            if 'CARD=Device' in device:
-                subprocess.run(OLD_MIC_MIXER, stderr=subprocess.DEVNULL)
+            for card, (control, value) in MIC_MIXERS.items():
+                if 'CARD=%s,' % card in device:
+                    subprocess.run(['amixer', '-q', '-c', card, 'sset', control, value], stderr=subprocess.DEVNULL)
             command = ['arecord', '-q', '-D', device, '-f', 'S16_LE', '-r', str(SAMPLE_RATE), '-c', '1', '-t', 'raw']
             try:
                 process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -274,7 +280,8 @@ class Microphone(object):
             if words:
                 text = ' '.join(word['word'] for word in words)
                 confidence = min(word.get('conf', 0) for word in words)
-                if recent_peak_dbfs >= MIN_SPEECH_DBFS and confidence >= MIN_WORD_CONF:
+                has_stop_word = any(word['word'] in STOP_WORDS[language] for word in words)
+                if recent_peak_dbfs >= (SPEECH_DBFS['parked'] if has_stop_word else speech_dbfs()) and confidence >= MIN_WORD_CONF:
                     in_sentence = conversation.active() and (len(words) != len(all_words) or conversation.speech_seconds() > SHORT_S)
                     more_words_seconds = all_words[-1].get('end', 0) - all_words[0].get('start', 0) if len(words) != len(all_words) else None
                     self._heard(language, text, in_sentence, more_words_seconds)
@@ -283,10 +290,10 @@ class Microphone(object):
                     self.status['rejected_count'] += 1
         else:
             partial = json.loads(recognizer.PartialResult()).get('partial', '')
-            if any(word in partial.split() for word in STOP_WORDS[language]) and car.drive_direction and recent_peak_dbfs >= MIN_SPEECH_DBFS:
+            if any(word in partial.split() for word in STOP_WORDS[language]) and car.drive_direction and recent_peak_dbfs >= SPEECH_DBFS['parked']:
                 car.stop('voice stop')
                 events.add('audio', 'heard "%s" -> STOP' % partial)
-            elif (partial.replace('[unk]', '').strip() in FAST_PHRASES[language] and recent_peak_dbfs >= MIN_SPEECH_DBFS
+            elif (partial.replace('[unk]', '').strip() in FAST_PHRASES[language] and recent_peak_dbfs >= speech_dbfs()
                   and features.enabled('voice_commands') and not events.speaking.is_set() and not conversation.active()):
                 recognizer.Reset()  # or the final result would run it a second time
                 self._heard(language, partial.replace('[unk]', '').strip())
