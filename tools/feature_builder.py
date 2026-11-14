@@ -31,6 +31,7 @@ BUILDER = os.environ.get('PICAR_BUILDER') or 'claude'
 BUILDER_MODEL = os.environ.get('PICAR_BUILDER_MODEL', 'opus')
 BUILD_TIMEOUT_S = 40 * 60
 FIX_ROUNDS = 2              # test failures go back to the builder this often
+SIM_TEST_TRIES = 3          # some checks depend on timing (ball tracking under load): one clean run of three counts
 SIM_PORT = 8790
 COMMIT_AUTHOR = ['-c', 'user.name=FrankPSch', '-c', 'user.email=frank.schikarski@googlemail.com']
 CO_AUTHOR = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
@@ -39,8 +40,9 @@ FEATURES_FILE = 'remote_control/remote_control/features.py'
 AUDIO_FILE = 'remote_control/remote_control/audio.py'
 PROTECTED = ('tools/deploy.sh', 'tools/picar-update.sh', 'tools/systemd/', 'tools/voice_server.py', 'tools/voice_server.bat',
              'tools/feature_builder.py')
-GO = re.compile(r'\b(go|goh|gou)\b', re.IGNORECASE)
+GO = re.compile(r'\b(go+m?|goh|gou)\b', re.IGNORECASE)  # Whisper also writes a German "go" as "Goom"
 DEPLOY = re.compile(r'd[ei]e?p?l(oy|oi|eu|ey)', re.IGNORECASE)
+AWAITED_WORD = {'proposed': (GO, 'Go, Option eins.'), 'built': (DEPLOY, 'Deploy.')}  # state -> (pattern, Whisper priming)
 
 BUILDER_PROMPT = '''You build one new feature for the SunFounder PiCar-V robot car in this repository
 (Raspberry Pi 3 B+, Raspbian Bullseye, Python 3.9, Django 2.0; the car runs remote_control/ as a systemd service).
@@ -78,8 +80,9 @@ SAY = {
 }
 
 
-def _run(command, cwd=REPO, timeout=600, env=None):
-    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env)
+def _run(command, cwd=REPO, timeout=600, env=None, stdin_text=None):
+    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env,
+                            input=stdin_text.encode('utf-8') if stdin_text is not None else None)
     return result.returncode, result.stdout.decode('utf-8', 'replace')
 
 
@@ -235,7 +238,7 @@ class Builder(object):
     def _build(self):
         request = self.request
         slug = re.sub(r'[^a-z0-9]+', '-', request['title'].lower()).strip('-')[:40] or 'feature'
-        request['branch'] = 'voice/%s-%s' % (time.strftime('%Y%m%d-%H%M'), slug)
+        request['branch'] = 'voice/%s-%s' % (time.strftime('%Y%m%d-%H%M%S'), slug)
         request['worktree'] = os.path.join(BUILDS, request['branch'].split('/')[1])
         os.makedirs(BUILDS, exist_ok=True)
         request['log'] = request['worktree'] + '.log'
@@ -251,11 +254,11 @@ class Builder(object):
                 session = self._run_builder(prompt, session)
                 problems, feature = check_build(request['worktree'], base)
                 if not problems:
-                    passed, report = run_sim_tests(request['worktree'])
-                    if not passed:  # some checks depend on timing: a real failure fails twice
-                        self._log(report + '\nrunning the tests again')
+                    for _ in range(SIM_TEST_TRIES):
                         passed, report = run_sim_tests(request['worktree'])
-                    self._log(report)
+                        self._log(report)
+                        if passed:
+                            break
                     if passed:
                         break
                     problems = ['simulation tests failed:', report]
@@ -276,11 +279,12 @@ class Builder(object):
             self._say('failed')
 
     def _run_builder(self, prompt, session):
-        command = [BUILDER, '-p', prompt, '--output-format', 'json', '--model', BUILDER_MODEL, '--permission-mode', 'acceptEdits',
+        # The prompt goes in on stdin: a multi-line argument does not survive a .cmd/.bat wrapper on Windows
+        command = [BUILDER, '-p', '--output-format', 'json', '--model', BUILDER_MODEL, '--permission-mode', 'acceptEdits',
                    '--allowedTools', 'Read,Edit,Write,Glob,Grep', '--disallowedTools', 'Bash,WebFetch,WebSearch,Agent']
         if session:
             command += ['--resume', session]
-        code, output = _run(command, cwd=self.request['worktree'], timeout=BUILD_TIMEOUT_S)
+        code, output = _run(command, cwd=self.request['worktree'], timeout=BUILD_TIMEOUT_S, stdin_text=prompt)
         self._log('builder exit %d: %s' % (code, output[-3000:]))
         try:
             result = json.loads(output[output.index('{'):])

@@ -46,17 +46,24 @@ NOT_SPEECH_PROBABILITY = 0.6
 whisper_model = WhisperModel(WHISPER_SIZE, device='cuda', compute_type='int8_float32', download_root=os.path.join(VOICE_DIR, 'models'), local_files_only=True)
 
 
-def _whisper(samples, language=None):
-    segments, info = whisper_model.transcribe(samples, language=language, beam_size=1, vad_filter=True, hotwords='Claude, go, deploy', condition_on_previous_text=False)
+def _whisper(samples, language=None, initial_prompt=None):
+    segments, info = whisper_model.transcribe(samples, language=language, beam_size=1, vad_filter=True, hotwords=None if initial_prompt else 'Claude',
+                                              initial_prompt=initial_prompt, condition_on_previous_text=False)
     return ' '.join(segment.text.strip() for segment in segments if segment.no_speech_prob < NOT_SPEECH_PROBABILITY), info.language
 
 
-def transcribe(pcm):
+def transcribe(pcm, gate=None):
+    '''gate: (pattern, example) when a word is awaited ("go", "deploy"). A German "go" often comes out as "Co." or "Boom";
+    a second German pass primed with the example hears it (measured: every "go" phrase found, "Cool"/"Gut" not taken).'''
     samples = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
     text, language = _whisper(samples)
     if language not in LANGUAGES:  # short sentences are sometimes taken for a third language
         language = LANGUAGES[0]
         text, _ = _whisper(samples, language)
+    if gate and text and not gate[0].search(text):
+        primed, _ = _whisper(samples, 'de', gate[1])
+        if gate[0].search(primed):
+            return primed, language
     return text, language
 
 
@@ -199,7 +206,7 @@ def answer(pcm, new_conversation, car_status, car_features, send_text, send_audi
     with history_lock:
         if new_conversation:
             del history[:]
-        transcript, language = transcribe(pcm)
+        transcript, language = transcribe(pcm, feature_builder.AWAITED_WORD.get(builder.state))
         heard_at = time.time()
         send_text({'transcript': transcript, 'language': language})
         print('%s heard (%.2f s for %.1f s, %s): %s' % (time.strftime('%H:%M:%S'), heard_at - started, len(pcm) / 32000.0, language, transcript), flush=True)
