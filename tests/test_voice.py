@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import audio, events, features  # noqa: E402
+from remote_control import audio, features, speaker, voice_link, voice_settings  # noqa: E402
 from remote_control import conversation as conversation_module  # noqa: E402
 from remote_control.car import car  # noqa: E402
 
@@ -83,6 +83,17 @@ class Sounds(object):
             time.sleep(0.1)
 
 
+class FakeStream(object):
+    def __init__(self, sounds):
+        self.sounds = sounds
+
+    def write(self, audio):
+        self.sounds.speech_bytes += len(audio)
+
+    def close(self):
+        pass
+
+
 class VoiceTest(unittest.TestCase):
     def setUp(self):
         self.sounds = Sounds()
@@ -90,7 +101,7 @@ class VoiceTest(unittest.TestCase):
         stubs.voice_up, stubs.build_running, stubs.hello = False, False, True
         features.set_enabled('claude_voice', True)
         features.set_enabled('voice_commands', True)
-        events.speaking.clear()
+        speaker.speaking.clear()
         car.stop()
         for patch in self.link_patches(STUB_VOICE_PORT, STUB_LAUNCHER_PORT):
             patch.start()
@@ -99,20 +110,19 @@ class VoiceTest(unittest.TestCase):
     def link_patches(self, voice_port, launcher_port):
         sounds = self.sounds
         return [
-            mock.patch.object(conversation_module, 'VOICE_SERVER', ('127.0.0.1', voice_port)),
-            mock.patch.object(conversation_module, 'LAUNCHER', ('127.0.0.1', launcher_port)),
-            mock.patch.object(conversation_module, '_play', lambda *tones: sounds.tones.append(tones[0])),
-            mock.patch.object(events, 'open_speaker', lambda rate: 'speaker'),
-            mock.patch.object(events, 'write_speaker', lambda speaker, audio: setattr(sounds, 'speech_bytes', sounds.speech_bytes + len(audio))),
-            mock.patch.object(events, 'close_speaker', lambda speaker: None),
+            mock.patch.object(voice_link, 'voice_server_port', voice_port),
+            mock.patch.object(voice_link, 'launcher_port', launcher_port),
+            mock.patch.object(speaker, 'play_tones', lambda *tones: sounds.tones.append(tones[0])),
+            mock.patch.object(speaker, 'play_tones_later', lambda *tones: None),
+            mock.patch.object(speaker, 'open_stream', lambda rate: FakeStream(sounds)),
         ]
 
     def tone(self, name):
-        return conversation_module._tone(getattr(conversation_module, name))
+        return getattr(speaker.Tone, name.replace('TONE_', ''))
 
     def server_by_voice(self, phrase, language='de'):
-        audio.microphone._last_command = (None, 0.0, None)
-        audio.microphone._heard(language, phrase)
+        audio.microphone.words.reset_repeats()
+        audio.microphone.words.heard(language, phrase)
 
 
 class ServerPhraseTest(VoiceTest):
@@ -188,15 +198,15 @@ class ThresholdTest(unittest.TestCase):
     '''Measured 2026-11-14 at mic gain 7/7: room -59, voice -22..-36 parked; motor -24..-29, voice -18..-21 driving.'''
     def setUp(self):
         features.set_enabled('voice_commands', True)
-        events.speaking.clear()
+        speaker.speaking.clear()
         car.stop()
         car.set_steer(90)
 
     def acts(self, word, peak_dbfs, driving):
         heard = []
         car.drive_direction = 1 if driving else 0
-        with mock.patch.object(audio.microphone, '_heard', lambda language, text, *rest: heard.append(text)):
-            audio.microphone._recognize('de', FakeRecognizer(word), b'', peak_dbfs)
+        with mock.patch.object(audio.microphone.words, 'heard', lambda language, text, *rest: heard.append(text)):
+            audio.microphone.words.recognize('de', FakeRecognizer(word), b'', peak_dbfs)
         car.drive_direction = 0
         return bool(heard)
 
@@ -216,9 +226,9 @@ class ThresholdTest(unittest.TestCase):
         self.assertTrue(self.acts('stopp', -40, True))
 
     def test_conversation_thresholds(self):
-        self.assertEqual(conversation_module.speech_dbfs(), -48)
+        self.assertEqual(voice_settings.speech_dbfs(), -48)
         car.drive_direction = 1
-        self.assertEqual(conversation_module.speech_dbfs(), -22)
+        self.assertEqual(voice_settings.speech_dbfs(), -22)
         car.drive_direction = 0
 
 

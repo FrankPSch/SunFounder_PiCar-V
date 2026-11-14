@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import api, audio, conversation as conversation_module, events, features, media, rooms  # noqa: E402
+from remote_control import api, audio, commands, conversation as conversation_module, events, features, media, rooms, speaker  # noqa: E402
 from remote_control.car import car, STEER_MAX, STEER_MIN  # noqa: E402
 from remote_control.tracker import tracker  # noqa: E402
 
@@ -112,11 +112,11 @@ class FakeRequest(object):
 
 def hear(language, text, in_sentence=False):
     '''What the word recogniser does with a recognised, loud and sure phrase.'''
-    audio.microphone._heard(language, text, in_sentence)
+    audio.microphone.words.heard(language, text, in_sentence)
 
 
 def reset_voice_state():
-    audio.microphone._last_command = (None, 0.0, None)
+    audio.microphone.words.reset_repeats()
 
 
 class CommandTest(unittest.TestCase):
@@ -130,7 +130,7 @@ class CommandTest(unittest.TestCase):
         car.set_speed(START_SPEED)
         car.set_cam_step(START_CAM_STEP)
         reset_voice_state()
-        events.speaking.clear()
+        speaker.speaking.clear()
         self.calls = []
         record = lambda label: (lambda *args, **kwargs: self.calls.append(label))  # noqa: E731
         patches = [
@@ -144,13 +144,11 @@ class CommandTest(unittest.TestCase):
             mock.patch.object(tracker, 'teach', record('teach')),
             mock.patch.object(tracker, 'set_animal', record('set_animal')),
             mock.patch.object(tracker, '_next_treasure', record('next_treasure')),
-            mock.patch.object(conversation, 'server', lambda action: self.calls.append('server ' + action)),
+            mock.patch.object(commands, 'switch_voice_server', lambda action: self.calls.append('server ' + action)),
             mock.patch.object(conversation, 'start', lambda *args: self.calls.append('conversation start')),
             mock.patch.object(conversation, 'active', lambda: False),
         ]
-        help_target = _help_target()
-        if help_target:
-            patches.append(mock.patch.object(help_target[0], help_target[1], record('help')))
+        patches.append(mock.patch.object(commands, 'speak_help', record('help')))
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -172,21 +170,11 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(state[key], expected, label)
 
 
-def _help_target():
-    '''(module, function name) that speaks the help text, once it exists.'''
-    try:
-        from remote_control import commands
-    except ImportError:
-        return None
-    return commands, 'speak_help'
-
 
 class SpokenPhraseTest(CommandTest):
     def test_every_phrase(self):
         for language, phrases in SPOKEN.items():
             for phrase, effect in phrases.items():
-                if effect == ('calls', ['help']) and not _help_target():
-                    continue  # help is new in the refactor
                 with self.subTest(language=language, phrase=phrase):
                     self.setUp_phrase(phrase)
                     hear(language, phrase)
@@ -225,7 +213,7 @@ class SpokenPhraseTest(CommandTest):
         self.assertEqual(self.calls, [])
 
     def test_car_speaking_mutes_commands(self):
-        events.speaking.set()
+        speaker.speaking.set()
         hear('de', 'links')
         hear('de', 'claude starten')
         self.assertEqual(car.state()['steer_angle'], 90)
@@ -292,37 +280,55 @@ class ApiCommandTest(CommandTest):
         self.assertEqual(api.command(FakeRequest({'cmd': 'drive'})).status_code, 400)
 
 
+class HelpTest(unittest.TestCase):
+    def test_german_help_names_groups_and_commands(self):
+        text = commands.help_text('de')
+        self.assertTrue(text.startswith(commands.HELP_INTRO['de']))
+        for expected in ('Fahren: vorwärts', 'Kamera: kamera links', 'Folgen: folge ball', 'Fotos und Videos: foto', 'System: hey claude', 'claude starten', 'hilfe'):
+            self.assertIn(expected, text)
+
+    def test_english_help(self):
+        self.assertIn('Driving: forward, back, left', commands.help_text('en'))
+
+
+class ClaudeCommandTest(CommandTest):
+    def test_claude_gets_no_command_that_moves(self):
+        names = {name for name, _ in commands.for_claude()}
+        self.assertTrue({'photo', 'camera_left', 'center', 'stop', 'follow_ball', 'help'} <= names)
+        self.assertFalse({'forward', 'back', 'hey_claude', 'claude_start', 'claude_stop'} & names)
+
+    def test_claude_may_take_a_photo(self):
+        self.assertEqual(commands.run_for_claude('photo'), 'claude ran photo')
+        self.assertEqual(self.calls, ['snapshot'])
+
+    def test_claude_may_not_drive(self):
+        self.assertIn('may not', commands.run_for_claude('forward'))
+        self.assertIn('may not', commands.run_for_claude('no_such_command'))
+        self.assertEqual(car.state()['drive_direction'], 0)
+
+    def test_claude_reply_runs_the_command(self):
+        conversation._on_text({'run_command': 'camera_up'})
+        self.assertEqual(car.state()['tilt_ticks'], 20)
+        conversation._on_text({'run_command': 'forward'})
+        self.assertEqual(car.state()['drive_direction'], 0)
+
+    def test_web_cannot_reach_voice_only_actions(self):
+        self.assertEqual(api.command(FakeRequest({'cmd': 'help', 'language': 'de'})).status_code, 400)
+
+
 class TableTest(unittest.TestCase):
     '''The command code and this file's tables list the same commands and phrases.'''
     def test_spoken_phrases_match(self):
-        known = _spoken_phrases_in_code()
         for language, phrases in SPOKEN.items():
-            expected = {phrase for phrase, effect in phrases.items() if effect != ('calls', ['help']) or _help_target()}
-            self.assertEqual(known[language], expected, language)
+            self.assertEqual(set(commands.phrases(language)), set(phrases), language)
 
     def test_api_commands_match(self):
-        self.assertEqual(set(_api_commands_in_code()), {body['cmd'] for body, _ in API})
+        self.assertEqual(set(commands.api_names()), {body['cmd'] for body, _ in API})
 
     def test_steering_limits(self):
         self.assertLess(STEER_MIN, 70)
         self.assertGreater(STEER_MAX, 110)
 
-
-def _spoken_phrases_in_code():
-    try:
-        from remote_control import commands
-        return {language: set(commands.phrases(language)) for language in SPOKEN}
-    except ImportError:
-        return {language: set(audio.VOICE_PHRASES[language]) | set(audio.STOP_WORDS[language]) | set(audio.SERVER_PHRASES[language])
-                | set(audio.WAKE_PHRASES[language]) for language in SPOKEN}
-
-
-def _api_commands_in_code():
-    try:
-        from remote_control import commands
-        return commands.api_names()
-    except ImportError:
-        return api.COMMANDS
 
 
 if __name__ == '__main__':

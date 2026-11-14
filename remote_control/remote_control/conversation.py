@@ -1,38 +1,24 @@
 '''
-Claude conversation, the car's half (the PC's half is tools/voice_server.py, reached through its SSH tunnel).
+Claude conversation, the car's half (the PC's half is tools/voice_server.py, reached through voice_link.py).
 "hey claude" -> the PC says "Hallo" -> every sentence goes to the PC, its spoken answer plays on the car's speaker.
 Listening ends after IDLE_END_S without speech (falling tone). "hey claude, wie geht es dir" works in one breath.
-Steering stays on the car (audio.py): exact single phrases still steer and are not sent; words inside a sentence do not steer.
-Claude may switch features (reply field set_feature). While claude_voice is on, the car asks the PC every NEWS_POLL_S
-for announcements (a feature built by voice request is ready, installed, ...) and speaks them when nobody is talking.
-"Claude starten" / "Claude beenden" (audio.SERVER_PHRASES) ask the PC's launcher (tools/voice_launcher.py, port 8767)
-to start or stop the voice server: rising tone when it is ready, falling tone when off, low tone when the PC does not answer.
+Spoken commands stay on the car (word_recognizer.py): a whole command phrase runs and is not sent; words inside a
+sentence do not steer. Claude may flip switches (set_feature) and run spoken commands that do not move the car
+(run_command, commands.for_claude). While claude_voice is on, the car asks the PC every NEWS_POLL_S for
+announcements (a feature built by voice request is ready, ...) and speaks them when nobody is talking.
 '''
 import collections
-import http.client
 import json
-import math
-import struct
 import threading
 import time
 
-from . import events, features, telemetry
+from . import commands, events, features, speaker, telemetry, voice_link, voice_protocol as protocol
 from .car import car
+from .voice_settings import speech_dbfs, voice_languages
 
-VOICE_SERVER = ('127.0.0.1', 8766)
-LAUNCHER = ('127.0.0.1', 8767)
-SERVER_READY_S = 90         # Whisper and Piper warm up on the PC
-DEFAULT_VOICE_LANGUAGES = 'de'
-PLAYBACK_HEADER = {'X-Car-Playback-Rate': str(events.PLAYBACK_RATE)}  # the PC's speech comes at this rate (X-Audio-Rate)
-HEALTH_TIMEOUT_S = 2
-ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
 NEWS_POLL_S = 10
-SAMPLE_RATE = 16000
-# SPEECH_DBFS = -55  # one value for parked and driving, mic gain 4/7 (2026-11-14 noon)
-# A chunk this loud counts as speech. Measured 2026-11-14, Jabra mic gain 7/7 (audio.MIC_MIXERS): room -59..-60, owner's
-# voice -22..-36 parked; motor -24..-29 while driving, voice on top -18..-21.
-SPEECH_DBFS = {'parked': -48, 'driving': -22}
+SAMPLE_RATE = protocol.UTTERANCE_RATE
 CHUNK_S = 0.1
 PRE_ROLL_CHUNKS = 3         # the chunks before the level rose: the start of the first word
 END_SILENCE_CHUNKS = 7
@@ -40,49 +26,23 @@ MIN_SPEECH_CHUNKS = 3
 MAX_SENTENCE_S = 20
 ROLLING_S = 10              # audio kept for "hey claude" and the rest of the sentence in one breath
 WAKE_MARGIN_S = 1.0
-SHORT_S = 1.6               # a list word is shorter; a longer utterance is a sentence
+SHORT_S = 1.6               # a command phrase is shorter; a longer utterance is a sentence
 COMMAND_GRACE_S = 0.5       # the word recogniser may decide just after the end of speech
-TONE_START = (660, 880)
-TONE_END = (880, 660)
-TONE_FAILED = (220, 220)
-TONE_NOTE_S = 0.12
+STATUS_MAX_CHARS = 4000
 
 
-def _tone(frequencies):
-    samples = []
-    for frequency in frequencies:
-        for index in range(int(TONE_NOTE_S * SAMPLE_RATE)):
-            samples.append(int(9000 * math.sin(2 * math.pi * frequency * index / SAMPLE_RATE)))
-    return struct.pack('<%dh' % len(samples), *samples)
+def _seconds(audio):
+    return len(audio) / (2.0 * SAMPLE_RATE)
 
 
-def _play(*sounds):
-    speaker = events.open_speaker(SAMPLE_RATE)
-    try:
-        for sound in sounds:
-            events.write_speaker(speaker, sound)
-    finally:
-        events.close_speaker(speaker)
-
-
-def _car_status():
+def _car_headers():
     status = dict(car.state())
     status.update({name: value for name, value in telemetry.latest.items() if isinstance(value, (int, float, str))})
-    return json.dumps(status)[:4000]
-
-
-def speech_dbfs():
-    '''Level at which a chunk counts as speech: much higher while the motor runs.'''
-    return SPEECH_DBFS['driving' if car.drive_direction else 'parked']
-
-
-def voice_languages():
-    '''Setting voice_languages ("de", "de,en"): the word recognisers on the car, and the languages Whisper may pick on the PC.'''
-    return [name.strip() for name in str(events.settings().get('voice_languages', DEFAULT_VOICE_LANGUAGES)).split(',') if name.strip()]
-
-
-def _car_features():
-    return json.dumps([[feature['name'], feature['on'], feature['help']] for feature in features.describe()])
+    return {protocol.STATUS: json.dumps(status)[:STATUS_MAX_CHARS],
+            protocol.FEATURES: json.dumps([[feature['name'], feature['on'], feature['help']] for feature in features.describe()]),
+            protocol.COMMANDS: json.dumps(commands.for_claude()),
+            protocol.VOICE_LANGUAGES: ','.join(voice_languages()),
+            'Content-Type': 'application/octet-stream'}
 
 
 class Conversation(object):
@@ -97,13 +57,15 @@ class Conversation(object):
         self._speech_chunks = 0
         self._silent_chunks = 0
         self._last_sentence_s = 0.0
+        self._reply = []
         threading.Thread(target=self._poll_news, name='voice-news', daemon=True).start()
 
+    # ---- asked by the word recogniser ----
     def active(self):
         return time.time() < self._until or self._busy
 
     def speech_seconds(self):
-        return (len(self._sentence) / (2.0 * SAMPLE_RATE)) if self._sentence is not None else self._last_sentence_s
+        return _seconds(self._sentence) if self._sentence is not None else self._last_sentence_s
 
     def discard_sentence(self):
         '''The word recogniser used this utterance as a command: it is not for Claude.'''
@@ -122,34 +84,19 @@ class Conversation(object):
             chunks = list(self._rolling)[-int((sentence_seconds + WAKE_MARGIN_S) / CHUNK_S):]
             self._send_sentence(b''.join(chunks), sentence_seconds)
         else:
-            threading.Thread(target=self._open, daemon=True).start()
-
-    def _open(self):
-        try:
-            connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S * 3)
-            connection.request('GET', '/hello?language=' + voice_languages()[0], headers=PLAYBACK_HEADER)
-            response = connection.getresponse()
-            if response.status != 200:  # a voice server from before /hello
-                response.read()
-                _play(_tone(TONE_START))
-            else:
-                self._play_reply(response)
-                self.status['state'] = 'listening'
-        except (OSError, http.client.HTTPException, ValueError) as error:
-            self._failed('voice server not reachable (%s)' % error)
-
-    def _failed(self, text):
-        events.add('voice', text)
-        self._until = 0.0
-        self.status.update(state='off', error=text)
-        _play(_tone(TONE_FAILED))
+            threading.Thread(target=self._greet, name='voice-greeting', daemon=True).start()
 
     def end(self):
         self._until = 0.0
         self.status['state'] = 'off'
         events.add('voice', 'conversation ended')
-        threading.Thread(target=_play, args=(_tone(TONE_END),), daemon=True).start()
+        speaker.play_tones_later(speaker.Tone.END)
 
+    def end_if_active(self):
+        if self.active():
+            self.end()
+
+    # ---- the microphone's chunks ----
     def feed(self, chunk, level):
         '''Every microphone chunk, from the capture thread: never blocks.'''
         self._rolling.append(chunk)
@@ -159,32 +106,50 @@ class Conversation(object):
             self._sentence = None
             self.end()
             return
-        if self._busy or events.speaking.is_set():
+        if self._busy or speaker.speaking.is_set():
             self._sentence = None
             return
         if self._sentence is None:
-            if level < speech_dbfs():
-                return
-            pre_roll = list(self._rolling)[-PRE_ROLL_CHUNKS:]
-            self._sentence, self._speech_chunks, self._silent_chunks, self._discard = bytearray(b''.join(pre_roll)), 0, 0, False
+            if level >= speech_dbfs():
+                self._begin_sentence()
             return
+        self._continue_sentence(chunk, level)
+
+    def _begin_sentence(self):
+        pre_roll = list(self._rolling)[-PRE_ROLL_CHUNKS:]
+        self._sentence, self._speech_chunks, self._silent_chunks, self._discard = bytearray(b''.join(pre_roll)), 0, 0, False
+
+    def _continue_sentence(self, chunk, level):
         self._sentence += chunk
         if level >= speech_dbfs():
             self._speech_chunks, self._silent_chunks = self._speech_chunks + 1, 0
         else:
             self._silent_chunks += 1
-        seconds = len(self._sentence) / (2.0 * SAMPLE_RATE)
-        if self._silent_chunks >= END_SILENCE_CHUNKS or seconds >= MAX_SENTENCE_S:
-            sentence, self._sentence = bytes(self._sentence), None
-            spoken_seconds = seconds - self._silent_chunks * CHUNK_S
-            self._last_sentence_s = spoken_seconds
-            self._until = time.time() + IDLE_END_S
-            if self._speech_chunks >= MIN_SPEECH_CHUNKS:
-                self._send_sentence(sentence, spoken_seconds)
+        seconds = _seconds(self._sentence)
+        if self._silent_chunks < END_SILENCE_CHUNKS and seconds < MAX_SENTENCE_S:
+            return
+        sentence, self._sentence = bytes(self._sentence), None
+        spoken_seconds = seconds - self._silent_chunks * CHUNK_S
+        self._last_sentence_s = spoken_seconds
+        self._until = time.time() + IDLE_END_S
+        if self._speech_chunks >= MIN_SPEECH_CHUNKS:
+            self._send_sentence(sentence, spoken_seconds)
+
+    # ---- talking to the PC ----
+    def _greet(self):
+        try:
+            response = voice_link.greeting(voice_languages()[0])
+            if response is None:
+                speaker.play_tones(speaker.Tone.START)
+                return
+            self._play(response)
+            self.status['state'] = 'listening'
+        except voice_link.LinkError as error:
+            self._failed('voice server not reachable (%s)' % error)
 
     def _send_sentence(self, sentence, spoken_seconds):
         self._busy = True
-        threading.Thread(target=self._ask, args=(sentence, spoken_seconds), daemon=True).start()
+        threading.Thread(target=self._ask, args=(sentence, spoken_seconds), name='voice-ask', daemon=True).start()
 
     def _ask(self, sentence, spoken_seconds):
         try:
@@ -193,113 +158,58 @@ class Conversation(object):
                 if self._discard:
                     return
             self.status['state'] = 'thinking'
-            self._exchange(sentence)
+            self._play(voice_link.utterance(sentence, self._new, _car_headers()))
+            self._new = False
             self.status['state'] = 'listening'
-        except (OSError, http.client.HTTPException, ValueError) as error:
+        except (voice_link.LinkError,) + voice_link.CONNECTION_ERRORS as error:
             self._failed('voice server failed (%s)' % error)
         finally:
             self._busy = False
             if self.status['state'] != 'off':
                 self._until = time.time() + IDLE_END_S
 
-    def _exchange(self, sentence):
-        connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
-        connection.request('POST', '/utterance?new=%d' % self._new, sentence, {'Content-Type': 'application/octet-stream',
-                           'X-Car-Status': _car_status(), 'X-Car-Features': _car_features(), 'X-Car-Languages': ','.join(voice_languages()), 'X-Car-Playback-Rate': str(events.PLAYBACK_RATE)})
-        response = connection.getresponse()
-        if response.status != 200:
-            raise ValueError('HTTP %d' % response.status)
-        self._new = False
-        self._play_reply(response)
-
     def _poll_news(self):
         while True:
             time.sleep(NEWS_POLL_S)
-            if not features.enabled('claude_voice') or self.active() or self._sentence is not None or events.speaking.is_set():
+            if not features.enabled('claude_voice') or self.active() or self._sentence is not None or speaker.speaking.is_set():
                 continue
             try:
-                connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=ANSWER_TIMEOUT_S)
-                connection.request('GET', '/news', headers=PLAYBACK_HEADER)
-                response = connection.getresponse()
-                if response.status == 200:
-                    self._play_reply(response)
-            except (OSError, http.client.HTTPException, ValueError):
+                response = voice_link.news()
+                if response is not None:
+                    self._play(response)
+            except (voice_link.LinkError,) + voice_link.CONNECTION_ERRORS:
                 pass  # no voice server running: nothing to announce
 
-    def _play_reply(self, response):
-        '''Reads the server's frames: shows and logs the text, plays the audio, flips switches Claude asked for.'''
-        speaker, speaker_open, reply = None, False, []
-        try:
-            while True:
-                header = response.read(5)
-                if len(header) < 5:
-                    return
-                kind, length = header[:1], struct.unpack('>I', header[1:])[0]
-                payload = response.read(length)
-                if kind == b'T':
-                    fields = json.loads(payload.decode('ascii'))
-                    if 'transcript' in fields:
-                        self.status.update(transcript=fields['transcript'], language=fields['language'], reply=None)
-                        if fields['transcript']:
-                            events.add('voice', 'you: ' + fields['transcript'])
-                    if 'sentence' in fields:
-                        reply.append(fields['sentence'])
-                        self.status['reply'] = ' '.join(reply)
-                        events.add('voice', 'claude: ' + fields['sentence'])
-                    if 'error' in fields:
-                        self.status['error'] = fields['error']
-                    if 'set_feature' in fields:
-                        try:
-                            features.set_enabled(fields['set_feature'], fields['on'])
-                            events.add('voice', 'claude switched %s %s' % (fields['set_feature'], 'on' if fields['on'] else 'off'))
-                        except KeyError as error:
-                            events.add('voice', 'claude: %s' % error)
-                elif kind == b'A':
-                    if not speaker_open:
-                        self.status['state'] = 'speaking'
-                        speaker, speaker_open = events.open_speaker(int(response.getheader('X-Audio-Rate') or SAMPLE_RATE)), True
-                    events.write_speaker(speaker, payload)
-        finally:
-            if speaker_open:
-                events.close_speaker(speaker)
+    def _play(self, response):
+        self._reply = []
+        voice_link.play_reply(response, self._on_text, lambda: self.status.update(state='speaking'))
 
-    def server(self, action):
-        '''"start" or "stop" the PC voice server through the launcher; reports by tone and event, never blocks the caller.'''
-        if self.active():
-            self.end()
-        threading.Thread(target=self._server, args=(action,), daemon=True).start()
-
-    def _server(self, action):
-        try:
-            connection = http.client.HTTPConnection(*LAUNCHER, timeout=HEALTH_TIMEOUT_S * 3)
-            connection.request('POST', '/' + action)
-            response = connection.getresponse()
-            state = json.loads(response.read().decode('ascii') or '{}').get('server')
-        except (OSError, http.client.HTTPException, ValueError) as error:
-            return self._server_failed('PC launcher not reachable (%s)' % error)
-        if response.status == 409:
-            return self._server_failed('voice server not stopped: a feature build is running')
-        if action == 'stop':
-            events.add('voice', 'voice server stopped', say='claude off')
-            return _play(_tone(TONE_END))
-        deadline = time.time() + SERVER_READY_S
-        while state != 'running' and time.time() < deadline:
-            time.sleep(2)
+    def _on_text(self, fields):
+        '''One text frame of the PC's reply: show and log it, run what Claude asked for.'''
+        if 'transcript' in fields:
+            self.status.update(transcript=fields['transcript'], language=fields['language'], reply=None)
+            if fields['transcript']:
+                events.add('voice', 'you: ' + fields['transcript'])
+        if 'sentence' in fields:
+            self._reply.append(fields['sentence'])
+            self.status['reply'] = ' '.join(self._reply)
+            events.add('voice', 'claude: ' + fields['sentence'])
+        if 'error' in fields:
+            self.status['error'] = fields['error']
+        if 'set_feature' in fields:
             try:
-                connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S)
-                connection.request('GET', '/health')
-                state = 'running' if connection.getresponse().status == 200 else state
-            except (OSError, http.client.HTTPException):
-                pass
-        if state != 'running':
-            return self._server_failed('voice server did not start within %d s' % SERVER_READY_S)
-        events.add('voice', 'voice server ready', say='claude ready')
-        _play(_tone(TONE_START))
+                features.set_enabled(fields['set_feature'], fields['on'])
+                events.add('voice', 'claude switched %s %s' % (fields['set_feature'], 'on' if fields['on'] else 'off'))
+            except KeyError as error:
+                events.add('voice', 'claude: %s' % error)
+        if 'run_command' in fields:
+            events.add('voice', commands.run_for_claude(fields['run_command']))
 
-    def _server_failed(self, text):
-        self.status['error'] = text
+    def _failed(self, text):
         events.add('voice', text)
-        _play(_tone(TONE_FAILED))
+        self._until = 0.0
+        self.status.update(state='off', error=text)
+        speaker.play_tones(speaker.Tone.FAILED)
 
     def describe(self):
         return dict(self.status, seconds_left=max(0, int(self._until - time.time())))

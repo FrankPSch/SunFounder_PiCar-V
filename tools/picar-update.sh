@@ -50,7 +50,7 @@ say "Update startet. Ich bin gleich wieder da."
 systemctl start picar
 if wait_healthy; then
     write_status updated "$old_commit" "$new_commit" ""
-    sleep 5  # after the car's own "Ich bin bereit" (events.STARTUP_MESSAGE): the speaker plays one sound at a time
+    sleep 5  # after the car's own "Ich bin bereit" (api.STARTUP_MESSAGE): the speaker plays one sound at a time
     say "Update fertig."
     exit 0
 fi
