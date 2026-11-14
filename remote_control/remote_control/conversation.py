@@ -5,6 +5,8 @@ Listening ends after IDLE_END_S without speech (falling tone). "hey claude, wie 
 Steering stays on the car (audio.py): exact single phrases still steer and are not sent; words inside a sentence do not steer.
 Claude may switch features (reply field set_feature). While claude_voice is on, the car asks the PC every NEWS_POLL_S
 for announcements (a feature built by voice request is ready, installed, ...) and speaks them when nobody is talking.
+"Claude starten" / "Claude beenden" (audio.SERVER_PHRASES) ask the PC's launcher (tools/voice_launcher.py, port 8767)
+to start or stop the voice server: rising tone when it is ready, falling tone when off, low tone when the PC does not answer.
 '''
 import collections
 import http.client
@@ -18,6 +20,8 @@ from . import events, features, telemetry
 from .car import car
 
 VOICE_SERVER = ('127.0.0.1', 8766)
+LAUNCHER = ('127.0.0.1', 8767)
+SERVER_READY_S = 90         # Whisper and Piper warm up on the PC
 HEALTH_TIMEOUT_S = 2
 ANSWER_TIMEOUT_S = 30
 IDLE_END_S = 60
@@ -238,6 +242,44 @@ class Conversation(object):
         finally:
             if speaker_open:
                 events.close_speaker(speaker)
+
+    def server(self, action):
+        '''"start" or "stop" the PC voice server through the launcher; reports by tone and event, never blocks the caller.'''
+        if self.active():
+            self.end()
+        threading.Thread(target=self._server, args=(action,), daemon=True).start()
+
+    def _server(self, action):
+        try:
+            connection = http.client.HTTPConnection(*LAUNCHER, timeout=HEALTH_TIMEOUT_S * 3)
+            connection.request('POST', '/' + action)
+            response = connection.getresponse()
+            state = json.loads(response.read().decode('ascii') or '{}').get('server')
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            return self._server_failed('PC launcher not reachable (%s)' % error)
+        if response.status == 409:
+            return self._server_failed('voice server not stopped: a feature build is running')
+        if action == 'stop':
+            events.add('voice', 'voice server stopped', say='claude off')
+            return _play(_tone(TONE_END))
+        deadline = time.time() + SERVER_READY_S
+        while state != 'running' and time.time() < deadline:
+            time.sleep(2)
+            try:
+                connection = http.client.HTTPConnection(*VOICE_SERVER, timeout=HEALTH_TIMEOUT_S)
+                connection.request('GET', '/health')
+                state = 'running' if connection.getresponse().status == 200 else state
+            except (OSError, http.client.HTTPException):
+                pass
+        if state != 'running':
+            return self._server_failed('voice server did not start within %d s' % SERVER_READY_S)
+        events.add('voice', 'voice server ready', say='claude ready')
+        _play(_tone(TONE_START))
+
+    def _server_failed(self, text):
+        self.status['error'] = text
+        events.add('voice', text)
+        _play(_tone(TONE_FAILED))
 
     def describe(self):
         return dict(self.status, seconds_left=max(0, int(self._until - time.time())))

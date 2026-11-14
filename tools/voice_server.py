@@ -12,7 +12,9 @@ Connection: the server listens on this PC's loopback only and opens an SSH tunne
        reply: frames of kind (1 byte) + length (4 bytes) + payload; 'T' = JSON text, 'A' = 16 kHz mono 16-bit audio
        T fields: transcript + language, sentence, error, set_feature + on (the car flips that switch)
   GET  /news                 announcements waiting for the car (build finished, ...), same frames; empty when none
+  POST /shutdown             ends this server and its tunnel; 409 while a feature build or deploy runs
 Feature requests by voice (propose -> "go" builds -> "deploy" installs): tools/feature_builder.py.
+Started and stopped with the car by tools/voice_launcher.py; starting it by hand still works.
 '''
 import http.server
 import json
@@ -287,6 +289,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlparse(self.path)
+        if url.path == '/shutdown':
+            busy = builder.state in ('building', 'deploying')
+            self.send_response(409 if busy else 200)
+            self.end_headers()
+            self.wfile.write(builder.describe().encode('ascii', 'replace'))
+            if not busy:
+                print('shutdown requested', flush=True)
+                # the whole process tree: the SSH tunnel and Piper must not outlive the server
+                threading.Timer(0.5, subprocess.run, (['taskkill', '/T', '/F', '/PID', str(os.getpid())],),
+                                {'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}).start()
+            return
         pcm = self.rfile.read(int(self.headers['Content-Length']))
         self.send_response(200 if url.path == '/utterance' else 404)
         self.end_headers()

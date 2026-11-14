@@ -7,7 +7,8 @@ Microphone features. The USB mic can be opened by one process only, so one captu
   stop_word    - Vosk keywords (STOP_WORDS, English + German) stop the motors (act on partial results, fast)
   voice_commands - Vosk with small fixed word lists (VOICE_PHRASES); one recogniser per language in setting
                  voice_languages (default German only: fastest, and no mix-ups between the languages)
-  claude_voice - "hey claude" (WAKE_PHRASES) starts a conversation (conversation.py); exact list words still steer during it
+  claude_voice - "hey claude" (WAKE_PHRASES) starts a conversation (conversation.py); exact list words still steer during it;
+                 "Claude starten" / "Claude beenden" (SERVER_PHRASES) start or stop the PC voice server
   record_audio - writes the chunks to a .wav while a video records
 The capture runs only while at least one of these is on.
 '''
@@ -40,6 +41,9 @@ NOISE_CHUNKS = 3
 NOISE_COOLDOWN_S = 30
 STOP_WORDS = {'en': ('stop', 'halt'), 'de': ('stopp', 'stop', 'halt', 'anhalten')}
 WAKE_PHRASES = {'en': ('hey claude', 'hello claude'), 'de': ('hey claude', 'hallo claude')}
+# Recognised with Piper's voice on the car at confidence 1.0 (2026-11-14); all words are in the model vocabularies.
+SERVER_PHRASES = {'en': {'start claude': 'start', 'stop claude': 'stop'},
+                  'de': {'claude starten': 'start', 'claude beenden': 'stop', 'claude stoppen': 'stop'}}
 # Act on these as soon as they are heard, without waiting for the end of the phrase. Only steering: a wrong one just
 # turns the wheels; words that make the car drive still need the full check on the final result.
 FAST_PHRASES = {'en': ('left', 'right', 'straight'), 'de': ('links', 'rechts', 'geradeaus')}
@@ -109,7 +113,9 @@ VOICE_PHRASES = {
 for _phrases in VOICE_PHRASES.values():
     assert set(_phrases.values()) == set(VOICE_COMMANDS), 'phrase list out of step with VOICE_COMMANDS'
 assert all(any(phrase in phrases for phrases in VOICE_PHRASES.values()) for phrase in CONVERSATION_ONLY_PHRASES)
-assert set(VOICE_PHRASES) == set(STOP_WORDS) == set(SPEECH_MODELS) == set(WAKE_PHRASES) == set(FAST_PHRASES)
+assert set(VOICE_PHRASES) == set(STOP_WORDS) == set(SPEECH_MODELS) == set(WAKE_PHRASES) == set(FAST_PHRASES) == set(SERVER_PHRASES)
+for _language, _server_phrases in SERVER_PHRASES.items():
+    assert not set(_server_phrases) & set(VOICE_PHRASES[_language]) and set(_server_phrases.values()) == {'start', 'stop'}
 for _language, _fast in FAST_PHRASES.items():
     assert set(_fast) <= set(VOICE_PHRASES[_language]), 'fast phrase missing from the word list'
 
@@ -244,7 +250,7 @@ class Microphone(object):
                 if language not in self._vosk_models:
                     self._vosk_models[language] = vosk.Model(model_dir)
                 phrases = list(STOP_WORDS[language]) + (sorted(VOICE_PHRASES[language]) if word_list == 'commands' else [])
-                phrases += list(WAKE_PHRASES[language]) if wake else []
+                phrases += list(WAKE_PHRASES[language]) + list(SERVER_PHRASES[language]) if wake else []
                 # ensure_ascii=False: an escaped umlaut is not found in the vocabulary and the word is silently dropped
                 recognizer = vosk.KaldiRecognizer(self._vosk_models[language], SAMPLE_RATE, json.dumps(phrases + ['[unk]'], ensure_ascii=False))
                 recognizer.SetWords(True)
@@ -295,7 +301,13 @@ class Microphone(object):
             events.add('audio', 'heard "%s"' % text)
             conversation.start(more_words_seconds)
             return
-        command = VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') and not events.speaking.is_set() and not in_sentence else None
+        server_action = SERVER_PHRASES[language].get(text)
+        if server_action and features.enabled('claude_voice') and not events.speaking.is_set() and not in_sentence:
+            conversation.discard_sentence()
+            events.add('audio', 'heard "%s" -> voice server %s' % (text, server_action))
+            conversation.server(server_action)
+            return
+        command =VOICE_PHRASES[language].get(text) if features.enabled('voice_commands') and not events.speaking.is_set() and not in_sentence else None
         if command and text in CONVERSATION_ONLY_PHRASES and conversation.active():
             return
         if command:
