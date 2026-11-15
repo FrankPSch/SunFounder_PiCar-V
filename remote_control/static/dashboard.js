@@ -337,6 +337,8 @@ async function pollHistory() {
     const data = await (await fetch('/api/history?minutes=60')).json();
     drawChart($('#chart-temp'), data.rows, data.columns.indexOf('cpu_temp_c'), '#e0a030');
     drawChart($('#chart-wifi'), data.rows, data.columns.indexOf('wifi_dbm'), '#3fa7d6');
+    drawChart($('#chart-ram'), data.rows, data.columns.indexOf('mem_used_pct'), '#6fbf73');
+    drawChart($('#chart-power'), data.rows, data.columns.indexOf('undervoltage'), '#e05a4f');
   } catch (error) { /* shown by the connection pill */ }
 }
 

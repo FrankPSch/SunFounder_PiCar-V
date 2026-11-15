@@ -2,6 +2,7 @@
 """Simulation checks for the second feature round: toggles, exclusivity, media, QR, markers/rooms, treasure hunt, audio status."""
 import ast
 import json
+import re
 import os
 import sys
 import time
@@ -169,6 +170,15 @@ check('dashboard has the switch and setting lists', all(marker in dashboard_html
 s = cmd('setting', name='voice_languages', value='de,en')
 check('voice_languages set from the dashboard', s['settings']['voice_languages'], 'de,en')
 cmd('setting', name='voice_languages', value='de')
+
+# dashboard charts: four, one under the other, each drawing a column the car records (telemetry.HISTORY_COLUMNS)
+with urllib.request.urlopen(BASE + '/api/history?minutes=60') as response:
+    history_columns = json.load(response)['columns']
+with urllib.request.urlopen(BASE + '/static/dashboard.js') as response:
+    chart_columns = re.findall(r"drawChart\(\$\('#chart-[a-z]+'\), data\.rows, data\.columns\.indexOf\('([a-z_0-9]+)'\)", response.read().decode('utf-8'))
+check('dashboard charts draw recorded columns', (chart_columns, all(column in history_columns for column in chart_columns)),
+      (['cpu_temp_c', 'wifi_dbm', 'mem_used_pct', 'undervoltage'], True))
+check('dashboard has the four chart canvases', all('id="chart-%s"' % name in dashboard_html for name in ('temp', 'wifi', 'ram', 'power')), True)
 
 # natural_voice: no recordings in the simulation's data folder -> espeak-ng either way
 s = cmd('feature', name='natural_voice', on=True)
