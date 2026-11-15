@@ -36,10 +36,7 @@ def _load():
 
 
 def _save():
-    os.makedirs(features.DATA_DIR, exist_ok=True)
-    with open(ROOMS_FILE, 'w') as rooms_file:
-        json.dump({'names': {str(key): value for key, value in _data['names'].items()},
-                   'transitions': _data['transitions']}, rooms_file, indent=2, sort_keys=True)
+    features.write_json(ROOMS_FILE, {'names': {str(key): value for key, value in _data['names'].items()}, 'transitions': _data['transitions']})
 
 
 _data = _load()

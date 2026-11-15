@@ -22,7 +22,7 @@ TAG_PREFIX = 'deploy/'
 SOURCES = ('chat', 'voice', 'rollback')
 REVIEWS_FILE = pc_settings.voice_path('data', 'reviews.json')
 UPDATE_TIMEOUT_S = 300
-UPDATE_COMMAND = 'sudo /home/pi/SunFounder_PiCar-V/tools/picar-update.sh release'
+UPDATE_COMMAND = 'sudo %s/tools/picar-update.sh release' % pc_settings.CAR_REPO_DIR
 TESTS_TIMEOUT_S = 1800
 
 

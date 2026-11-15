@@ -1,5 +1,5 @@
 '''Records everything the car says with fixed words (spoken_texts.sentences()) in the natural Piper voice of the PC and
-copies what the car does not have yet to /home/pi/picar-data/voice_cache (voice_cache.py). The voice server runs it at
+copies what the car does not have yet to its picar-data/voice_cache (voice_cache.py). The voice server runs it at
 every start, so a new command gets its voice by itself; the car speaks espeak-ng for anything not recorded.
 Usage: python tools/prerender_voice.py        (voice environment)'''
 import os
@@ -15,7 +15,7 @@ import text_to_speech
 from remote_control import spoken_texts, voice_cache
 
 LOCAL_CACHE = os.path.join(pc_settings.VOICE_DIR, 'voice_cache')
-CAR_CACHE = '/home/pi/picar-data/voice_cache'
+CAR_CACHE = pc_settings.CAR_DATA_DIR + '/voice_cache'
 VOICE_RATE = 22050          # Piper's own rate: the car converts to its playback rate while playing
 SAMPLE_WIDTH = 2
 SSH_TIMEOUT_S = 120

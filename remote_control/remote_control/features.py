@@ -4,13 +4,25 @@ Feature toggles. Every optional feature has one switch, stored in DATA_DIR/featu
 
 FEATURES is the single registry. The JSON file is checked against it at startup:
 unknown names are reported and dropped, missing names get their default.
+
+Switch single_config_file: switches and settings in one file, DATA_DIR/picar.json {"version", "features", "settings"},
+filled from features.json and settings.json when it is switched on (both stay, for switching back). The calibration
+stays its own file: the SunFounder driver library reads it directly.
+Switch data_files_as_pi: the service runs as root, so its files belong to root and pi (SSH, the PC tools) cannot
+change them without sudo; with it on, every file written through write_json() / give_to_pi(), and once all of
+DATA_DIR, belong to the owner of DATA_DIR (pi). The twin writes the owners down instead (sim/hardware.py).
 '''
 import json
 import os
 import threading
 
+from .sim import hardware
+
 DATA_DIR = os.environ.get('PICAR_DATA', '/home/pi/picar-data')
 FEATURES_FILE = os.path.join(DATA_DIR, 'features.json')
+CONFIG_FILE = os.path.join(DATA_DIR, 'picar.json')
+CONFIG_VERSION = 1
+CAR_OWNER = 'pi'
 
 FEATURES = {
     # safety and system
@@ -45,6 +57,10 @@ FEATURES = {
     'voice_prompts':      (False, 'Speak events with espeak-ng (needs a speaker)'),
     'push_notifications': (False, 'Send alarms to ntfy.sh (needs ntfy_topic in settings.json)'),
     'natural_voice':      (True,  'Speak with the natural Piper voice recorded on the PC (tools/prerender_voice.py), else espeak-ng'),
+    # data (architecture backlog 2026-11-15: each switch is the new way, off = the old way)
+    'single_config_file': (False, 'Switches and settings in one file picar.json (with a version) instead of features.json + settings.json'),
+    'data_files_as_pi':   (False, 'Data files in picar-data belong to pi, not root, so SSH and the PC tools can change them'),
+    'disk_warning':       (False, 'Warn on the dashboard and to Claude when the SD card is 80 % full, with the biggest folders'),
 }
 TRACKING_FEATURES = ('ball_tracking', 'face_tracking', 'animal_tracking')
 
@@ -53,11 +69,48 @@ _listeners = []
 _state = {}
 
 
+def _read(path, empty):
+    try:
+        with open(path) as source:
+            return json.load(source)
+    except (OSError, ValueError):
+        return empty
+
+
+def give_to_pi(path):
+    '''With data_files_as_pi on: path belongs to the owner of DATA_DIR (pi) from now on.'''
+    if not _state.get('data_files_as_pi'):
+        return
+    if hardware.ACTIVE:
+        hardware.chown(path, CAR_OWNER)
+    elif hasattr(os, 'geteuid') and os.geteuid() == 0:
+        owner = os.stat(DATA_DIR)
+        os.chown(path, owner.st_uid, owner.st_gid)
+
+
+def write_json(path, data):
+    '''Atomic: a cut-off write never leaves half a file.'''
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + '.tmp', 'w') as target:
+        json.dump(data, target, indent=2, sort_keys=True)
+    os.replace(path + '.tmp', path)
+    give_to_pi(path)
+
+
+def config_section(name):
+    '''A section of picar.json ({} if there is none yet).'''
+    return dict(_read(CONFIG_FILE, {}).get(name, {}))
+
+
+def save_config_section(name, values):
+    config = _read(CONFIG_FILE, {})
+    config.update({'version': CONFIG_VERSION, name: values})
+    write_json(CONFIG_FILE, config)
+
+
 def _load():
-    stored = {}
-    if os.path.exists(FEATURES_FILE):
-        with open(FEATURES_FILE) as features_file:
-            stored = json.load(features_file)
+    config_features = _read(CONFIG_FILE, {}).get('features', {})
+    stored = config_features if config_features.get('single_config_file') else _read(FEATURES_FILE, {})
     unknown_names = sorted(set(stored) - set(FEATURES))
     if unknown_names:
         print('features: ignoring unknown names in %s: %s' % (FEATURES_FILE, unknown_names))
@@ -65,10 +118,26 @@ def _load():
 
 
 def _save():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(FEATURES_FILE + '.tmp', 'w') as features_file:
-        json.dump(_state, features_file, indent=2, sort_keys=True)
-    os.replace(FEATURES_FILE + '.tmp', FEATURES_FILE)
+    if _state.get('single_config_file') or os.path.exists(CONFIG_FILE):
+        save_config_section('features', dict(_state))      # switched off: picar.json says so, features.json is used again
+    if not _state.get('single_config_file'):
+        write_json(FEATURES_FILE, _state)
+
+
+def _single_config_switched(name, is_on):
+    '''On the first time: the settings go into picar.json too (settings.json stays). Off: they go back to settings.json.'''
+    settings_file = os.path.join(DATA_DIR, 'settings.json')
+    if name == 'single_config_file' and is_on and not config_section('settings'):
+        save_config_section('settings', _read(settings_file, {}))
+    elif name == 'single_config_file' and not is_on and config_section('settings'):
+        write_json(settings_file, config_section('settings'))
+
+
+def _all_files_to_pi(name, is_on):
+    if name == 'data_files_as_pi' and is_on:
+        for folder, folders, files in os.walk(DATA_DIR):
+            for item in folders + files:
+                give_to_pi(os.path.join(folder, item))
 
 
 def enabled(name):
@@ -101,5 +170,7 @@ def describe():
 
 _state.update(_load())
 _save()
+on_change(_single_config_switched)
+on_change(_all_files_to_pi)
 assert set(_state) == set(FEATURES), 'feature registry and state diverged'
 assert set(TRACKING_FEATURES) <= set(FEATURES), 'TRACKING_FEATURES names a feature missing from FEATURES'

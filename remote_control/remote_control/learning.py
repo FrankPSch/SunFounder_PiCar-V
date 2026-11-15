@@ -99,7 +99,9 @@ class Session(object):
             return None
         hearing = phrase_check.hear(models, language, phrase, audio)
         condition = 'driving' if car.drive_direction else 'parked'
-        phrase_check.save_recording(self.recordings_dir, condition, hearing, audio)
+        saved = phrase_check.save_recording(self.recordings_dir, condition, hearing, audio)
+        for path in (saved, os.path.dirname(saved), os.path.join(self.recordings_dir, phrase_check.RESULTS_FILE)):
+            features.give_to_pi(path)
         self.status['results'].append(dict(hearing.as_dict(), condition=condition))
         events.add('learn', '%s "%s": %s' % (language, phrase, hearing.spoken_feedback()))
         return hearing

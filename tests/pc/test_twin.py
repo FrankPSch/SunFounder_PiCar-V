@@ -117,6 +117,15 @@ class PcSwitches(unittest.TestCase):
         self.assertEqual(sorted(name for name in os.listdir(voice) if os.path.isdir(os.path.join(voice, name))), ['data', 'generated', 'logs', 'recordings'],
                          'only the kinds are new, nothing else is copied')
 
+    def test_car_paths_only_in_pc_settings(self):
+        features_source = '\n'.join(_lines(os.path.join(pc_settings.REPO, 'remote_control', 'remote_control', 'features.py')))
+        self.assertIn("DATA_DIR = os.environ.get('PICAR_DATA', '%s')" % pc_settings.CAR_DATA_DIR, features_source)
+        tools = os.path.join(pc_settings.REPO, 'tools')
+        copies = ['%s:%d' % (name, number) for name in sorted(os.listdir(tools)) if name.endswith('.py') and name != 'pc_settings.py'
+                  for number, line in enumerate(_lines(os.path.join(tools, name)), 1)
+                  if (pc_settings.CAR_DATA_DIR in line or pc_settings.CAR_REPO_DIR in line) and not line.lstrip().startswith(("'''", '#'))]
+        self.assertEqual(copies, [])
+
     def test_only_car_ssh_builds_ssh_calls(self):
         """Every other ssh call is the old way, kept while the switch car_ssh_module is off, and marked so."""
         tools = os.path.join(pc_settings.REPO, 'tools')

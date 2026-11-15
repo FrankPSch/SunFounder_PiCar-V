@@ -38,7 +38,7 @@ def _recordings_on_pc():
 
 def checks(expected_commit, source):
     '''[(requirement id, variant, passed, what was seen)] for the car as it is now.'''
-    running = _on_car('git -C /home/pi/SunFounder_PiCar-V rev-parse HEAD').strip()
+    running = _on_car('git -C %s rev-parse HEAD' % pc_settings.CAR_REPO_DIR).strip()
     listening = _on_car("ss -ltn | awk '{print $4}'")
     state = _car_state()
     speaker, audio = state.get('speaker', {}), state.get('audio', {})

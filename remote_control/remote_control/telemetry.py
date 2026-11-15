@@ -21,6 +21,8 @@ HISTORY_SAMPLES = 24 * 3600 // SAMPLE_SECONDS
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SERVICES = ('picar', 'picar-update.timer')
 I2C_DEVICES = {0x40: 'PCA9685 servo/PWM', 0x48: 'PCF8591 ADC'}
+DISK_WARNING_PCT = 80          # switch disk_warning: nothing is deleted, the owner decides
+STORAGE_SHOWN = 3
 
 UNDERVOLTAGE_NOW, THROTTLED_NOW, UNDERVOLTAGE_SINCE_BOOT = 1 << 0, 1 << 2, 1 << 16
 
@@ -152,7 +154,33 @@ def read_microphone():
     return {'present': bool(match), 'name': match.group(2).strip() if match else None}
 
 
-SLOW_READERS = {'git': read_git, 'i2c': read_i2c, 'services': read_services}
+def _folder_mb(path):
+    return sum(os.path.getsize(os.path.join(folder, name)) for folder, _, names in os.walk(path) for name in names) / 1e6
+
+
+def read_storage():
+    '''Switch disk_warning: the size of each picar-data folder and of the system journal, in MB.'''
+    if not features.enabled('disk_warning'):
+        return None
+    folders = {name: round(_folder_mb(os.path.join(features.DATA_DIR, name)), 1) for name in sorted(os.listdir(features.DATA_DIR))
+               if os.path.isdir(os.path.join(features.DATA_DIR, name))}
+    journal = re.search(r'take up ([\d.]+)([MG])', _run(['journalctl', '--disk-usage']) or '')
+    if journal:
+        folders['system journal'] = float(journal.group(1)) * (1000 if journal.group(2) == 'G' else 1)
+    return folders
+
+
+def disk_warning(snapshot):
+    '''One sentence when the SD card is DISK_WARNING_PCT full, with the biggest folders; else None.'''
+    used_pct = (snapshot.get('disk') or {}).get('used_pct', 0)
+    if not features.enabled('disk_warning') or used_pct < DISK_WARNING_PCT:
+        return None
+    biggest = sorted((snapshot.get('storage') or {}).items(), key=lambda item: -item[1])[:STORAGE_SHOWN]
+    return 'SD card %d %% full; biggest: %s' % (used_pct, ', '.join('%s %d MB' % item for item in biggest) or 'unknown')
+
+
+SLOW_READERS = {'git': read_git, 'i2c': read_i2c, 'services': read_services, 'storage': read_storage}
+features.on_change(lambda name, is_on: latest.update(storage=read_storage()) if name == 'disk_warning' else None)  # not a minute later
 
 
 def sample(include_slow=False):
@@ -169,6 +197,7 @@ def sample(include_slow=False):
         snapshot[name] = reader() if include_slow else latest.get(name)
     if SIM:
         snapshot.update(hardware.readings())   # the twin's sensors instead of the PC's
+    snapshot['disk_warning'] = disk_warning(snapshot)      # a string: it reaches Claude voice with the car status
     snapshot['warnings'] = warnings_for(snapshot)
     return snapshot
 
@@ -182,7 +211,9 @@ def warnings_for(snapshot):
         warnings.append('CPU throttled now')
     if (snapshot.get('cpu_temp_c') or 0) >= 75:
         warnings.append('CPU hot: %s C' % snapshot['cpu_temp_c'])
-    if (snapshot.get('disk') or {}).get('used_pct', 0) >= 90:
+    if snapshot.get('disk_warning'):
+        warnings.append(snapshot['disk_warning'])
+    elif (snapshot.get('disk') or {}).get('used_pct', 0) >= 90:
         warnings.append('SD card almost full')
     wifi = snapshot.get('wifi') or {}
     if wifi.get('level_dbm') is not None and wifi['level_dbm'] <= -75:

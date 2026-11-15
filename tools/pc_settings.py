@@ -10,6 +10,8 @@ VOICE_PYTHON = os.path.join(VOICE_DIR, 'env', 'Scripts', 'python.exe')
 CAR_HOST = os.environ.get('PICAR_HOST', '192.168.178.131')
 CAR = 'pi@' + CAR_HOST
 CAR_SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')
+CAR_DATA_DIR = '/home/pi/picar-data'            # features.DATA_DIR on the car (tests/pc/test_twin.py checks it)
+CAR_REPO_DIR = '/home/pi/SunFounder_PiCar-V'
 
 # Switches of the PC side, like features.py on the car: off by default, on in <voice dir>\pc_switches.json ({"name": true}).
 # Each one chooses between the old and the new way of one architecture item (project/WORKPLAN.md, backlog 2026-11-15).

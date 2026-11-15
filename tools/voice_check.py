@@ -18,13 +18,13 @@ import sys
 import time
 import urllib.request
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'remote_control'))
+import pc_settings  # noqa: E402  (also puts remote_control/ on the path)
 from remote_control import phrase_check, vocabulary  # noqa: E402
 
 CAR_URL = 'http://localhost:8000'
 POLL_S = 0.5
 HTTP_TIMEOUT_S = 10
-CAR_DATA_DIR = '/home/pi/picar-data'  # features.DATA_DIR on the car; importing features would write its settings file
+CAR_DATA_DIR = pc_settings.CAR_DATA_DIR  # importing features would write its settings file
 
 
 # ---- learn: the car service runs the session ----

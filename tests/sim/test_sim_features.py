@@ -206,5 +206,54 @@ class Features(SimCase):
         self.assertEqual((self.enabled(current, 'natural_voice'), current['speaker']['voice']), (False, 'espeak'))
         self.cmd('feature', name='natural_voice', on=True)
 
+    def _data_file(self, name):
+        with open(os.path.join(DATA, name), encoding='utf-8') as data_file:
+            return json.load(data_file)
+
+    @shows(('K.switch.single_config_file', 'on'), ('K.switch.single_config_file', 'off'))
+    def test_15_single_config_file(self):
+        settings_before = self._data_file('settings.json')
+        self.cmd('feature', name='single_config_file', on=True)
+        config = self._data_file('picar.json')
+        self.assertEqual((config['version'], config['features']['single_config_file'], config['settings']), (1, True, settings_before),
+                         'switches and settings in one file')
+        self.cmd('setting', name='voice_languages', value='de,en')
+        self.assertEqual(self._data_file('picar.json')['settings']['voice_languages'], 'de,en')
+        self.assertEqual(self._data_file('settings.json'), settings_before, 'settings.json is left alone while on')
+        self.cmd('feature', name='single_config_file', on=False)
+        self.assertFalse(self._data_file('features.json')['single_config_file'])
+        self.assertFalse(self._data_file('picar.json')['features']['single_config_file'], 'picar.json says it is off')
+        self.assertEqual(self.state()['settings']['voice_languages'], 'de,en', 'a setting changed while on is kept')
+        self.cmd('setting', name='voice_languages', value='de')
+
+    @shows(('K.switch.data_files_as_pi', 'on'), ('K.switch.data_files_as_pi', 'off'))
+    def test_16_data_files_as_pi(self):
+        photo = 'media/' + self.cmd('photo')['media']['files'][0]['name']
+        self.assertNotEqual(self._data_file('twin_owners.json').get(photo), 'pi', 'off: the service owns its files')
+        self.cmd('feature', name='data_files_as_pi', on=True)
+        owners = self._data_file('twin_owners.json')
+        self.assertEqual({name: owners.get(name) for name in ('features.json', 'settings.json', 'media', photo)},
+                         dict.fromkeys(('features.json', 'settings.json', 'media', photo), 'pi'), 'once: everything belongs to pi')
+        new_photo = 'media/' + self.cmd('photo')['media']['files'][0]['name']
+        self.assertEqual(self._data_file('twin_owners.json').get(new_photo), 'pi', 'a new file belongs to pi')
+        self.cmd('feature', name='data_files_as_pi', on=False)
+
+    @shows(('K.switch.disk_warning', 'on'), ('K.switch.disk_warning', 'off'))
+    def test_17_disk_warning(self):
+        hardware_file = os.path.join(DATA, 'twin_hardware.json')
+        with open(hardware_file, 'w') as hardware:
+            json.dump({'disk': {'total_gb': 62.3, 'free_gb': 9.3, 'used_pct': 85.0}}, hardware)
+        try:
+            current = self.wait_until(lambda state: state['telemetry'].get('disk', {}).get('used_pct') == 85.0, 12, 'the full twin disk')
+            self.assertIsNone(current['telemetry']['disk_warning'], 'off: no warning below 90 %')
+            self.cmd('feature', name='disk_warning', on=True)
+            current = self.wait_until(lambda state: state['telemetry'].get('disk_warning'), 12, 'the disk warning')
+            self.assertIn('SD card 85 % full; biggest: media', current['telemetry']['disk_warning'])
+            self.assertIn(current['telemetry']['disk_warning'], current['telemetry']['warnings'])
+            self.cmd('feature', name='disk_warning', on=False)
+            self.wait_until(lambda state: not state['telemetry'].get('disk_warning'), 12, 'the warning gone')
+        finally:
+            os.remove(hardware_file)
+
     def test_99_events_logged(self):
         self.assertGreaterEqual(len(self.state()['events']), 5)

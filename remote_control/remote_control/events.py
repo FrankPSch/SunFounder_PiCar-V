@@ -26,6 +26,8 @@ log = collections.deque(maxlen=LOG_LENGTH)
 
 
 def settings():
+    if features.enabled('single_config_file'):
+        return features.config_section('settings')
     try:
         with open(SETTINGS_FILE) as settings_file:
             return json.load(settings_file)
@@ -38,9 +40,10 @@ def update_setting(name, value):
         raise KeyError('unknown setting %r' % name)
     current = settings()
     current[name] = EDITABLE_SETTINGS[name](value)
-    os.makedirs(features.DATA_DIR, exist_ok=True)
-    with open(SETTINGS_FILE, 'w') as settings_file:
-        json.dump(current, settings_file, indent=2, sort_keys=True)
+    if features.enabled('single_config_file'):
+        features.save_config_section('settings', current)
+    else:
+        features.write_json(SETTINGS_FILE, current)
 
 
 def add(source, text, push=False, say=None):

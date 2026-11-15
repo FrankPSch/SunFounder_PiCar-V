@@ -39,6 +39,7 @@ def snapshot(prefix='photo', folder=''):
     name = os.path.join(folder, '%s-%s.jpg' % (prefix, _stamp())).replace('\\', '/')
     with open(os.path.join(MEDIA_DIR, name), 'wb') as photo:
         photo.write(jpeg_bytes())
+    features.give_to_pi(os.path.join(MEDIA_DIR, name))
     if prefix == 'photo':
         events.add('media', 'photo saved: ' + name)
     return name
@@ -55,6 +56,7 @@ def start_recording():
     if features.enabled('record_audio'):
         from . import audio
         audio.start_wav(os.path.join(MEDIA_DIR, name.replace('.mjpg', '.wav')))
+        features.give_to_pi(os.path.join(MEDIA_DIR, name.replace('.mjpg', '.wav')))
     events.add('media', 'recording started: ' + name, say=spoken_texts.EVENTS['recording'])
     return name
 
@@ -73,6 +75,7 @@ def stop_recording():
 
 def _record_loop(path, stop_flag):
     with open(path, 'wb') as video:
+        features.give_to_pi(path)
         if SIM:
             from .sim import world
             frames = world.mjpeg_frames()

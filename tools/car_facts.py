@@ -22,11 +22,11 @@ section python; python3 --version 2>&1
 section apt; dpkg-query -W -f='${db:Status-Abbrev} ${Package}\\n' | awk '$1 == "ii" {print $2}'
 section pip; pip3 list --format=freeze 2>/dev/null | cut -d= -f1
 section sound; aplay -l 2>/dev/null | sed -n 's/^card [0-9]*: \\([A-Za-z0-9_]*\\) .*/\\1/p' | sort -u
-section models; ls /home/pi/picar-data/models 2>/dev/null
-section voice_cache; for language in de en; do echo "$language $(ls /home/pi/picar-data/voice_cache/$language 2>/dev/null | wc -l)"; done
+section models; ls @DATA@/models 2>/dev/null
+section voice_cache; for language in de en; do echo "$language $(ls @DATA@/voice_cache/$language 2>/dev/null | wc -l)"; done
 section disk_free; df -h / | awk 'NR == 2 {print $4}'
-section commit; git -C /home/pi/SunFounder_PiCar-V log -1 --format='%h %s'
-'''
+section commit; git -C @REPO@ log -1 --format='%h %s'
+'''.replace('@DATA@', pc_settings.CAR_DATA_DIR).replace('@REPO@', pc_settings.CAR_REPO_DIR)
 KEY_SOFTWARE = ('espeak-ng', 'mbrola', 'opencv-data', 'python3-opencv', 'ffmpeg', 'alsa-utils', 'python3-numpy', 'vosk', 'picamera', 'piper')
 
 

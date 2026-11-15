@@ -19,8 +19,7 @@ import urllib.request
 
 import pc_settings
 
-CAR_REPO = '/home/pi/SunFounder_PiCar-V'
-CAR_DATA = '/home/pi/picar-data'
+CAR_REPO, CAR_DATA = pc_settings.CAR_REPO_DIR, pc_settings.CAR_DATA_DIR
 REPO_CALIBRATION = os.path.join(pc_settings.REPO, 'remote_control', 'remote_control', 'driver', 'config')
 SIM_START_TRIES = 60
 SIM_START_PAUSE_S = 0.5
