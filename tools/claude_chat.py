@@ -55,7 +55,7 @@ def _tool(name, description, properties, required):
             'input_schema': {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}}
 
 
-TOOLS = [
+LEGACY_TOOLS = [  # the old way, while the PC switch voice_tool_registry is off (same tools as tools/voice_tools.py)
     _tool('set_feature', 'Switch one of the car\'s features on or off. The names and current states are in the status line.',
           {'name': {'type': 'string'}, 'on': {'type': 'boolean'}}, ['name', 'on']),
     _tool('run_command', 'Run one of the car\'s spoken commands that do not drive it. The names are in the status line.',
@@ -79,6 +79,11 @@ TOOLS = [
           {'name': {'type': 'string'}, 'search': {'type': 'string'}}, ['name', 'search']),
     _tool('rollback_version', 'Put the previous version back on the car. Only after the owner asked for it and confirmed once.', {}, []),
 ]
+if pc_settings.switched_on('voice_tool_registry'):
+    import voice_tools
+    TOOLS = voice_tools.schemas()
+else:
+    TOOLS = LEGACY_TOOLS
 TOOL_TYPES = {tool['name']: {key: value['type'] for key, value in tool['input_schema']['properties'].items()} for tool in TOOLS}
 JSON_TYPES = {'string': str, 'boolean': bool, 'array': list}
 

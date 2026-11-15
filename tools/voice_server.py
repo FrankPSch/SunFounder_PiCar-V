@@ -29,6 +29,7 @@ import project_docs
 import release
 import speech_to_text
 import text_to_speech
+import voice_tools
 
 protocol = pc_settings.voice_protocol
 TUNNEL_RETRY_S = 5
@@ -135,6 +136,9 @@ class Turn(object):
 
     def _run_tool(self, name, arguments, transcript):
         log('  tool %s %s' % (name, json.dumps(arguments, ensure_ascii=False)[:300]))
+        if pc_settings.switched_on('voice_tool_registry'):
+            self.transcript, self.builder, self.start_rollback = transcript, builder, start_rollback
+            return voice_tools.run(name, self, arguments)
         if name == 'set_feature':
             known = [feature[0] for feature in self.car['features']]
             if arguments['name'] not in known:

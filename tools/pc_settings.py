@@ -17,6 +17,7 @@ CAR_REPO_DIR = '/home/pi/SunFounder_PiCar-V'
 # Each one chooses between the old and the new way of one architecture item (project/WORKPLAN.md, backlog 2026-11-15).
 SWITCHES = {
     'car_ssh_module': 'SSH to the car only through tools/car_ssh.py',
+    'voice_tool_registry': 'Claude voice tools from one registry (tools/voice_tools.py: schema, level and handler together)',
     'voice_folder_by_kind': 'Voice folder by kind: data (Frank\'s, back it up), logs, generated (rebuildable); the rest is the runtime',
 }
 SWITCHES_FILE = os.path.join(VOICE_DIR, 'pc_switches.json')

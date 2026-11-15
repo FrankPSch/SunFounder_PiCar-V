@@ -9,32 +9,30 @@ Every step of every wish goes to the wish list (wish_list.py), so a chat on the 
 Build and deploy hold integration_lock: the chat does not change master meanwhile. The builder gets the measured
 car facts (car_facts.py); a wish that needs software the car lacks ends as "for_chat" instead of a build.
 
-The checks do not trust the builder: protected files unchanged, existing switches and stop words unchanged,
-exactly one new switch with default off, both simulation test suites pass.
+The checks (build_checks.py) do not trust the builder; the simulation tests run on the twin (sim_runner.py).
 Builds run in their own clone (WORK_DIR\\repo, git worktrees under WORK_DIR\\builds), never in a checkout people edit.
 '''
-import ast
 import json
 import os
 import re
-import shutil
 import subprocess
-import tempfile
 import threading
 import time
 
+import build_checks
 import car_facts
 import integration_lock
 import pc_settings
 import release
 import requirements_report
-import twin
+import sim_runner
 import wish_list
 
-WORK_DIR = os.environ.get('PICAR_WORK_DIR', pc_settings.VOICE_DIR)
+WORK_DIR = sim_runner.WORK_DIR
 REPO = os.path.join(WORK_DIR, 'repo')
 BUILDS = os.path.join(WORK_DIR, 'builds')
-SIM_PYTHON = os.path.join(WORK_DIR, 'simenv', 'Scripts', 'python.exe')
+SIM_PYTHON, SIM_PORT = sim_runner.SIM_PYTHON, sim_runner.SIM_PORT
+run_sim_tests, sim_tests_pass = sim_runner.run_sim_tests, sim_runner.sim_tests_pass
 GIT_BASH = os.environ.get('GIT_BASH', r'C:\Program Files\Git\bin\bash.exe')
 # Claude Code without a window. PICAR_BUILDER replaces it with another command (tests: a stand-in that edits files).
 BUILDER = os.environ.get('PICAR_BUILDER') or 'claude'
@@ -43,19 +41,12 @@ BUILD_TIMEOUT_S = 40 * 60
 FIX_ROUNDS = 2              # test failures go back to the builder this often
 LOCK_WAIT_S = 30 * 60       # a chat push takes a few minutes; longer means something hangs
 NOT_FEASIBLE = re.compile(r'^NOT FEASIBLE:\s*(.+)$', re.MULTILINE)
-SIM_SUITE = os.path.join('tests', 'sim')
-SIM_SUITE_TIMEOUT_S = 600
-SIM_TEST_TRIES = 3          # some checks depend on timing (ball tracking under load): one clean run of three counts
-SIM_PORT = 8790
 COMMIT_AUTHOR = ['-c', 'user.name=FrankPSch', '-c', 'user.email=frank.schikarski@googlemail.com']
 CO_AUTHOR = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 
-FEATURES_FILE = 'remote_control/remote_control/features.py'
-COMMANDS_FILE = 'remote_control/remote_control/commands.py'
-VOCABULARY_FILE = 'remote_control/remote_control/vocabulary.py'
-PROTECTED = ('tools/deploy.sh', 'tools/picar-update.sh', 'tools/systemd/', 'tools/voice_server.py', 'tools/voice_server.bat',
-             'tools/feature_builder.py', 'tools/wish_list.py', 'tools/voice_launcher.py', 'tools/car_tunnel.py', 'tools/install_voice_launcher.bat',
-             'remote_control/remote_control/voice_protocol.py')
+FEATURES_FILE, COMMANDS_FILE, VOCABULARY_FILE = build_checks.FEATURES_FILE, build_checks.COMMANDS_FILE, build_checks.VOCABULARY_FILE
+PROTECTED, BuildError = build_checks.PROTECTED, build_checks.BuildError
+phrase_meanings_at, changed_meanings = build_checks.phrase_meanings_at, build_checks.changed_meanings
 GO = re.compile(r'\b(go+m?|goh|gou)\b', re.IGNORECASE)  # Whisper also writes a German "go" as "Goom"
 DEPLOY = re.compile(r'd[ei]e?p?l(oy|oi|eu|ey)', re.IGNORECASE)
 AWAITED_WORD = {'proposed': (GO, 'Go, Option eins.'), 'built': (DEPLOY, 'Deploy.')}  # state -> (pattern, Whisper priming)
@@ -110,9 +101,7 @@ SAY = {
 
 
 def _run(command, cwd=REPO, timeout=600, env=None, stdin_text=None):
-    result = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env,
-                            input=stdin_text.encode('utf-8') if stdin_text is not None else None)
-    return result.returncode, result.stdout.decode('utf-8', 'replace')
+    return sim_runner.run_command(command, cwd, timeout, env, stdin_text)
 
 
 def _git(*args, cwd=REPO):
@@ -122,114 +111,8 @@ def _git(*args, cwd=REPO):
     return output.strip()
 
 
-class BuildError(Exception):
-    pass
-
-
 class NotFeasible(Exception):
     '''The wish needs what a voice build cannot do: the chat takes it over.'''
-
-
-def _features_at(source):
-    '''FEATURES of a features.py source as {name: default}.'''
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Assign) and any(getattr(target, 'id', None) == 'FEATURES' for target in node.targets):
-            return {key.value: value.elts[0].value for key, value in zip(node.value.keys, node.value.values)}
-    raise BuildError('FEATURES not found in ' + FEATURES_FILE)
-
-
-def _stop_phrases_at(source):
-    '''The German and English phrases of Spoken('stop', ...) in a vocabulary.py source.'''
-    for node in ast.walk(ast.parse(source)):
-        if (isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'Spoken' and node.args
-                and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'stop'):
-            return [ast.literal_eval(argument) for argument in node.args[4:6]]
-    raise BuildError("Spoken('stop', ...) not found in " + VOCABULARY_FILE)
-
-
-def phrase_meanings_at(source):
-    '''{(language, phrase): command name} of every Spoken(...) in a vocabulary.py source.'''
-    meanings = {}
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'Spoken' and len(node.args) >= 6:
-            name = ast.literal_eval(node.args[0])
-            for language, argument in zip(('de', 'en'), node.args[4:6]):
-                meanings.update(((language, phrase), name) for phrase in ast.literal_eval(argument))
-    return meanings
-
-
-def changed_meanings(before, after):
-    '''Spoken changes, for the deploy summary: ["de 'danke claude': claude_end -> claude_stop", "de 'hupe': new -> horn", ...].'''
-    return ['%s %r: %s -> %s' % (language, phrase, before.get((language, phrase), 'new'), after.get((language, phrase), 'removed'))
-            for language, phrase in sorted(set(before) | set(after)) if before.get((language, phrase)) != after.get((language, phrase))]
-
-
-def deploy_summary(worktree, base):
-    '''(summary text for Claude voice, phrases whose meaning changes) of a build against its base.'''
-    files = _git('diff', '--name-only', base, 'HEAD', cwd=worktree).split()
-    meanings = changed_meanings(phrase_meanings_at(_git('show', '%s:%s' % (base, VOCABULARY_FILE), cwd=worktree)),
-                                phrase_meanings_at(_git('show', 'HEAD:' + VOCABULARY_FILE, cwd=worktree)))
-    redefined = [change for change in meanings if ': new ->' not in change]
-    text = 'files: %s; spoken phrases: %s' % (', '.join(files) or 'none', '; '.join(meanings) or 'unchanged')
-    return text, redefined
-
-
-def check_build(worktree, base):
-    '''Problems as text lines (empty = accepted) and the name of the new switch.'''
-    problems = []
-    changed = _git('diff', '--name-only', base, cwd=worktree).split() + _git('ls-files', '--others', '--exclude-standard', cwd=worktree).split()
-    problems += ['protected file changed: ' + name for name in changed if name.startswith(PROTECTED)]
-    old = _features_at(_git('show', '%s:%s' % (base, FEATURES_FILE), cwd=worktree))
-    with open(os.path.join(worktree, FEATURES_FILE), encoding='utf-8') as source:
-        new = _features_at(source.read())
-    problems += ['existing switch changed or removed: ' + name for name in old if new.get(name) != old[name]]
-    added = [name for name in new if name not in old]
-    if len(added) != 1:
-        problems.append('expected exactly one new switch in FEATURES, found %d: %s' % (len(added), added))
-    problems += ['new switch %s must default to False' % name for name in added if new[name] is not False]
-    with open(os.path.join(worktree, VOCABULARY_FILE), encoding='utf-8') as source:
-        if _stop_phrases_at(source.read()) != _stop_phrases_at(_git('show', '%s:%s' % (base, VOCABULARY_FILE), cwd=worktree)):
-            problems.append('stop phrases changed')
-    if added and not any(_uses(worktree, name, added[0]) for name in changed if name.endswith(('.py', '.js')) and name != FEATURES_FILE):
-        problems.append('the new switch %s is not used anywhere outside features.py' % added[0])
-    return problems, (added[0] if len(added) == 1 else None)
-
-
-def _uses(worktree, name, feature):
-    path = os.path.join(worktree, name)
-    if not os.path.exists(path):
-        return False
-    with open(path, encoding='utf-8', errors='replace') as source:
-        return feature in source.read()
-
-
-def run_sim_tests(worktree):
-    '''The simulation tests (tests/sim/) against a fresh simulated car on a car-like picar-data folder (the twin).
-    Returns (passed, a short report: the summary, or the failures).'''
-    data_dir = twin.seed_car_data(tempfile.mkdtemp(prefix='simdata_', dir=WORK_DIR))
-    try:
-        with twin.SimCar(worktree, SIM_PORT, data_dir, SIM_PYTHON) as car:
-            code, output = _run([SIM_PYTHON, '-m', 'unittest', 'discover', '-s', SIM_SUITE], cwd=worktree, timeout=SIM_SUITE_TIMEOUT_S,
-                                env=dict(car.env, PICAR_SIM_URL=car.url))
-            summary = ' | '.join(line for line in output.splitlines() if line.startswith(('Ran ', 'OK', 'FAILED')))
-            if code == 0:
-                return True, 'tests/sim: ' + summary
-            failures = [line for line in output.splitlines() if line.startswith(('FAIL:', 'ERROR:', 'AssertionError', 'urllib.error'))]
-            return False, 'tests/sim: %s\n%s' % (summary, '\n'.join(failures[-15:]) or output[-1500:])
-    except RuntimeError as error:
-        return False, str(error)
-    finally:
-        shutil.rmtree(data_dir, ignore_errors=True)  # a temporary folder this function made
-
-
-def sim_tests_pass(worktree, log):
-    '''run_sim_tests up to SIM_TEST_TRIES times; one clean run counts. log(report) for every run. Returns (passed, last report).'''
-    for _ in range(SIM_TEST_TRIES):
-        passed, report = run_sim_tests(worktree)
-        log(report)
-        if passed:
-            break
-    return passed, report
 
 
 class Builder(object):
@@ -350,7 +233,7 @@ class Builder(object):
                 not_feasible = NOT_FEASIBLE.search(answer)
                 if not_feasible:
                     raise NotFeasible(not_feasible.group(1).strip())
-                problems, feature = check_build(request['worktree'], base)
+                problems, feature = build_checks.check_build(request['worktree'], base, _git)
                 if not problems:
                     passed, report = sim_tests_pass(request['worktree'], self._log)
                     if passed:
@@ -364,7 +247,7 @@ class Builder(object):
             _git('add', '-A', cwd=request['worktree'])
             _git('commit', '-q', '-m', 'Voice feature %s: %s\n\n%s\nOption: %s\nNew switch %s, off by default. Built by Claude Code from a spoken request.\n\n%s'
                  % (feature, request['title'], request['understanding'], request['option'], feature, CO_AUTHOR), cwd=request['worktree'])
-            request['summary'], request['redefined'] = deploy_summary(request['worktree'], base)
+            request['summary'], request['redefined'] = build_checks.deploy_summary(request['worktree'], base, _git)
             self._set_state('built', 'commit %s on %s' % (_git('rev-parse', '--short', 'HEAD', cwd=request['worktree']), request['branch']), feature=feature)
             self._log(self.detail)
             self._say('built')

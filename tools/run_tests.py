@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-import feature_builder
+import sim_runner
 import pc_settings
 import requirements_report
 from remote_control import requirements
@@ -42,10 +42,10 @@ def main():
         os.remove(requirements_report.COVERAGE_FILE)  # evidence of this run only
     evidence = {requirements.COVERAGE_ENV: requirements_report.COVERAGE_FILE, 'PICAR_REQUIREMENTS_CATALOG': requirements_report.CATALOG_FILE}
     os.environ.update(evidence)     # the simulation tests show requirements too
-    results = [run_unit_tests(feature_builder.SIM_PYTHON, 'tests', evidence),
+    results = [run_unit_tests(sim_runner.SIM_PYTHON, 'tests', evidence),
                run_unit_tests(pc_settings.VOICE_PYTHON, os.path.join('tests', 'pc'), dict(evidence, CLAUDE_VOICE_MODEL='echo',
                                                                                          PICAR_WISHES_DIR=tempfile.mkdtemp(prefix='picar_wishes_'))),
-               feature_builder.sim_tests_pass(pc_settings.REPO, print)[0]]
+               sim_runner.sim_tests_pass(pc_settings.REPO, print)[0]]
     results.append(requirements_shown())
     print('RESULT:', 'ALL PASS' if all(results) else 'FAILED')
     return 0 if all(results) else 1

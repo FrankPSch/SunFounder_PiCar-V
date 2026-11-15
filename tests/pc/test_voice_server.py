@@ -18,6 +18,7 @@ import text_to_speech  # noqa: E402
 import voice_launcher  # noqa: E402
 from remote_control import requirements  # noqa: E402
 import voice_server  # noqa: E402
+import voice_tools  # noqa: E402
 
 protocol = pc_settings.voice_protocol
 TEST_PORT = 18866
@@ -123,6 +124,29 @@ class ToolTest(unittest.TestCase):
         self.assertFalse(claude_chat.valid_tool_input('run_command', {'name': 3}))
         self.assertFalse(claude_chat.valid_tool_input('run_command', {}))
         self.assertFalse(claude_chat.valid_tool_input('fly', {}))
+
+
+class ToolTestWithRegistry(ToolTest):
+    '''The same tool tests with the PC switch voice_tool_registry on (tools/voice_tools.py).'''
+    def setUp(self):
+        patch = mock.patch.object(pc_settings, 'switched_on', lambda name: name == 'voice_tool_registry')
+        patch.start()
+        self.addCleanup(patch.stop)
+        super().setUp()
+
+    def test_the_registry_offers_claude_the_same_tools(self):
+        self.assertEqual(voice_tools.schemas(), claude_chat.LEGACY_TOOLS)
+
+    def test_every_tool_is_complete(self):
+        for tool in voice_tools.TOOLS:
+            with self.subTest(tool=tool.name):
+                self.assertTrue(tool.description and callable(tool.run))
+                self.assertIn(tool.level, voice_tools.LEVELS)
+                self.assertTrue(set(tool.required) <= set(tool.properties))
+
+    def test_read_tools_answer_like_before(self):
+        with mock.patch.object(voice_tools.car_facts, 'summary', lambda: 'facts'), mock.patch.object(voice_tools.project_docs, 'status', lambda: 'status'):
+            self.assertEqual([self.turn._run_tool(name, {}, '') for name in ('car_facts', 'project_status')], ['facts', 'status'])
 
 
 class LauncherTest(unittest.TestCase):
