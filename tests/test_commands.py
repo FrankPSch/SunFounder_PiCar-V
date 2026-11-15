@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import api, audio, commands, conversation as conversation_module, events, features, media, rooms, speaker, vocabulary  # noqa: E402
+from remote_control import api, audio, commands, conversation as conversation_module, events, features, learning, media, rooms, speaker, vocabulary  # noqa: E402
 from remote_control.car import car, STEER_MAX, STEER_MIN  # noqa: E402
 from remote_control.tracker import tracker  # noqa: E402
 
@@ -43,6 +43,7 @@ SPOKEN = {
         'claude starten': ('calls', ['server start']), 'claude beenden': ('calls', ['server stop']), 'claude stoppen': ('calls', ['server stop']),
         'hey claude': ('calls', ['conversation start']), 'hallo claude': ('calls', ['conversation start']),
         'hilfe': ('calls', ['help']),
+        'befehle lernen': ('calls', ['learn start de']), 'lernen beenden': ('calls', ['learn end']),
     },
     'en': {
         'forward': ('drive_direction', 1), 'forwards': ('drive_direction', 1), 'go': ('drive_direction', 1),
@@ -59,6 +60,7 @@ SPOKEN = {
         'start claude': ('calls', ['server start']), 'stop claude': ('calls', ['server stop']),
         'hey claude': ('calls', ['conversation start']), 'hello claude': ('calls', ['conversation start']),
         'help': ('calls', ['help']),
+        'learn commands': ('calls', ['learn start en']), 'stop learning': ('calls', ['learn end']),
     },
 }
 # Phrases that need the car to be driving to show their effect, and the steering ones that start from another angle.
@@ -98,6 +100,9 @@ API = [
     ({'cmd': 'room_goto', 'name': 'Küche'}, ('calls', ['goto'])),
     ({'cmd': 'room_cancel'}, ('calls', ['cancel'])),
     ({'cmd': 'treasure_next'}, ('calls', ['next_treasure'])),
+    ({'cmd': 'learn', 'on': True}, ('calls', ['learn start de'])),
+    ({'cmd': 'learn', 'on': True, 'language': 'en', 'group': 'camera'}, ('calls', ['learn start en'])),
+    ({'cmd': 'learn', 'on': False}, ('calls', ['learn end'])),
 ]
 
 
@@ -149,6 +154,8 @@ class CommandTest(unittest.TestCase):
             mock.patch.object(conversation, 'active', lambda: False),
         ]
         patches.append(mock.patch.object(commands, 'speak_help', record('help')))
+        patches.append(mock.patch.object(learning.session, 'start', lambda language, group=None: self.calls.append('learn start ' + language)))
+        patches.append(mock.patch.object(learning.session, 'end', record('learn end')))
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)

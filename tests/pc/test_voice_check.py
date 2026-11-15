@@ -1,30 +1,37 @@
-'''tools/voice_check.py with the car's Vosk models (copied from the car to <voice dir>/vosk_models) and Piper as the
-speaker: every phrase must be understood, the verdicts, and the learning flow with microphone and speaker replaced.
+'''Recognition with the car's Vosk models (copied from the car to <voice dir>/vosk_models) and Piper as the speaker:
+every phrase must be understood, the verdicts, replay of kept tries, tools/voice_check.py learn against a stand-in car,
+and the owner's own recordings (copied from the car to <voice dir>/recordings) once there are any.
 Voice environment; run by tools/run_tests.py.'''
+import http.server
+import io
+import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
-from unittest import mock
+from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'tools'))
 import pc_settings  # noqa: E402
 import text_to_speech  # noqa: E402
 import voice_check  # noqa: E402
-from remote_control import vocabulary  # noqa: E402
+from remote_control import phrase_check, vocabulary  # noqa: E402
 
 MODELS = os.path.join(pc_settings.VOICE_DIR, 'vosk_models')
-SILENCE = b'\0\0' * voice_check.SAMPLE_RATE
-recognizers = None
+OWNER_RECORDINGS = os.path.join(pc_settings.VOICE_DIR, 'recordings')
+SILENCE = b'\0\0' * phrase_check.SAMPLE_RATE
+STUB_CAR_PORT = 18868
+models = None
 
 
 def setUpModule():
-    global recognizers
-    recognizers = voice_check.Recognizers(MODELS)
+    global models
+    models = voice_check.load_models(MODELS)
 
 
 def speech(phrase, language):
-    return text_to_speech.synthesize(phrase, language, rate=voice_check.SAMPLE_RATE)
+    return text_to_speech.synthesize(phrase, language, rate=phrase_check.SAMPLE_RATE)
 
 
 class RecognitionTest(unittest.TestCase):
@@ -33,46 +40,78 @@ class RecognitionTest(unittest.TestCase):
         failures = []
         for language in vocabulary.LANGUAGES:
             for phrase in sorted(vocabulary.phrases(language)):
-                hearing = recognizers.hear(language, phrase, speech(phrase, language))
-                if hearing.verdict != voice_check.Verdict.UNDERSTOOD:
+                hearing = phrase_check.hear(models, language, phrase, speech(phrase, language))
+                if hearing.verdict != phrase_check.Verdict.UNDERSTOOD:
                     failures.append('%s %r: %s %r %.2f' % (language, phrase, hearing.verdict.name, hearing.heard, hearing.confidence))
         self.assertEqual(failures, [])
 
 
 class VerdictTest(unittest.TestCase):
     def test_silence_is_too_quiet(self):
-        self.assertEqual(recognizers.hear('de', 'links', SILENCE).verdict, voice_check.Verdict.QUIET)
+        self.assertEqual(phrase_check.hear(models, 'de', 'links', SILENCE).verdict, phrase_check.Verdict.QUIET)
 
     def test_another_command_is_wrong(self):
-        hearing = recognizers.hear('de', 'links', speech('rechts', 'de'))
-        self.assertEqual((hearing.verdict, hearing.heard), (voice_check.Verdict.OTHER, 'rechts'))
+        hearing = phrase_check.hear(models, 'de', 'links', speech('rechts', 'de'))
+        self.assertEqual((hearing.verdict, hearing.heard), (phrase_check.Verdict.OTHER, 'rechts'))
         self.assertEqual(hearing.spoken_feedback(), 'falsch verstanden: rechts')
 
     def test_another_phrase_of_the_same_command_counts(self):
-        self.assertEqual(recognizers.hear('de', 'halt', speech('anhalten', 'de')).verdict, voice_check.Verdict.UNDERSTOOD)
+        self.assertEqual(phrase_check.hear(models, 'de', 'halt', speech('anhalten', 'de')).verdict, phrase_check.Verdict.UNDERSTOOD)
 
 
-class LearnTest(unittest.TestCase):
-    def test_learn_retries_and_keeps_the_good_recording(self):
-        said, folder = [], tempfile.mkdtemp(prefix='voice_check_')
-        takes = iter([SILENCE, speech('foto', 'de'), speech('bild', 'de')])
-        with mock.patch.object(voice_check, 'service_running', lambda: False), \
-                mock.patch.object(voice_check.alsa, 'usb_device', lambda tool: 'mic'), \
-                mock.patch.object(voice_check.alsa, 'set_mic_gain', lambda device: None), \
-                mock.patch.object(voice_check, 'record', lambda device: next(takes)), \
-                mock.patch.object(voice_check.speaker, 'say', lambda text, language: said.append(text)), \
-                mock.patch.object(voice_check.speaker, 'play_tones', lambda *tones: None):
-            hearings = voice_check.learn(recognizers, folder, 'de', None, 'photo')
-        self.assertEqual(said, ['Fotos und Videos', 'foto. Macht ein Foto.', 'zu leise', 'verstanden', 'bild. Macht ein Foto.', 'verstanden'])
-        self.assertEqual([hearing.verdict for hearing in hearings], [voice_check.Verdict.UNDERSTOOD] * 2)
-        replayed = voice_check.replay(recognizers, folder)
-        self.assertEqual([(hearing.phrase, hearing.verdict) for hearing in replayed], [('bild', voice_check.Verdict.UNDERSTOOD),
-                                                                                    ('foto', voice_check.Verdict.UNDERSTOOD)])
+class ReplayTest(unittest.TestCase):
+    def test_kept_tries_are_heard_again(self):
+        folder = tempfile.mkdtemp(prefix='voice_check_')
+        for phrase, audio in (('foto', SILENCE), ('foto', speech('foto', 'de')), ('bild', speech('bild', 'de'))):
+            phrase_check.save_recording(folder, 'parked', phrase_check.hear(models, 'de', phrase, audio), audio)
+        with redirect_stdout(io.StringIO()):
+            results = voice_check.replay(models, folder)
+            self.assertTrue(voice_check.all_understood(results))
+        self.assertEqual([(result['phrase'], result['verdict']) for result in results], [('foto', 'quiet'), ('foto', 'understood'), ('bild', 'understood')])
 
-    def test_learn_refuses_while_the_car_service_runs(self):
-        with mock.patch.object(voice_check, 'service_running', lambda: True):
-            with self.assertRaises(SystemExit):
-                voice_check.learn(recognizers, tempfile.mkdtemp(), 'de', None, None)
+    def test_owner_recordings_understood_then_are_understood_now(self):
+        '''The owner's voice as a regression test: copy the car's /home/pi/picar-data/voice_check to <voice dir>/recordings.'''
+        if not phrase_check.recorded_results(OWNER_RECORDINGS):
+            self.skipTest('no owner recordings in %s yet' % OWNER_RECORDINGS)
+        with redirect_stdout(io.StringIO()):
+            results = voice_check.replay(models, OWNER_RECORDINGS)
+        lost = ['%s %s %s: now %s (%s)' % (result['condition'], result['language'], result['phrase'], result['verdict'], result['heard'])
+                for result in results if result['then'] == 'understood' and result['verdict'] != 'understood']
+        self.assertEqual(lost, [])
+
+
+class LearnCommandTest(unittest.TestCase):
+    '''voice_check.py learn against a stand-in for the car's web API.'''
+    def test_starts_the_session_and_shows_every_try(self):
+        commands, result = [], {'language': 'de', 'phrase': 'foto', 'heard': 'foto', 'confidence': 1.0, 'peak_dbfs': -20.0,
+                                'verdict': 'understood', 'other_languages': {}, 'condition': 'parked'}
+        states = [{'active': True, 'results': [result]}, {'active': False, 'results': [result, dict(result, phrase='bild', heard='bild')]}]
+
+        class StubCar(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, body):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode('utf-8'))
+
+            def do_POST(self):
+                commands.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+                self.reply({'ok': True})
+
+            def do_GET(self):
+                self.reply({'audio': {'learning': states.pop(0) if len(states) > 1 else states[0]}})
+        stub = http.server.ThreadingHTTPServer(('127.0.0.1', STUB_CAR_PORT), StubCar)
+        threading.Thread(target=stub.serve_forever, daemon=True).start()
+        self.addCleanup(stub.server_close)
+        self.addCleanup(stub.shutdown)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = voice_check.main(['learn', '--car', 'http://127.0.0.1:%d' % STUB_CAR_PORT, '--group', 'media'])
+        self.assertEqual(commands, [{'cmd': 'learn', 'on': True, 'language': 'de', 'group': 'media'}])
+        self.assertEqual(code, 0)
+        self.assertIn('2 of 2 phrases understood', output.getvalue())
 
 
 class ChecklistTest(unittest.TestCase):

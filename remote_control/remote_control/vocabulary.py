@@ -71,6 +71,8 @@ SPOKEN = (
     Spoken('claude_start', 'system', 'voice_server', {'action': 'start'}, ('claude starten',), ('start claude',), kind=Kind.SYSTEM),
     Spoken('claude_stop', 'system', 'voice_server', {'action': 'stop'}, ('claude beenden', 'claude stoppen'), ('stop claude',), kind=Kind.SYSTEM),
     Spoken('help', 'system', 'help', {}, ('hilfe',), ('help',)),
+    Spoken('learn', 'system', 'learn', {'on': True}, ('befehle lernen',), ('learn commands',)),
+    Spoken('learn_stop', 'system', 'learn', {'on': False}, ('lernen beenden',), ('stop learning',)),
 )
 EXPLANATIONS = {  # name -> what it does (German, English), for learning the commands
     'forward': ('Fährt kurz vorwärts.', 'Drives forward for a moment.'),
@@ -97,6 +99,8 @@ EXPLANATIONS = {  # name -> what it does (German, English), for learning the com
     'claude_start': ('Startet den Sprachserver auf dem PC.', 'Starts the voice server on the PC.'),
     'claude_stop': ('Beendet den Sprachserver auf dem PC.', 'Stops the voice server on the PC.'),
     'help': ('Liest alle Befehle vor.', 'Reads out all commands.'),
+    'learn': ('Übt alle Befehle mit dir: ich sage sie vor, du sprichst nach.', 'Practises all commands with you: I say them, you repeat them.'),
+    'learn_stop': ('Beendet das Lernen.', 'Ends learning.'),
 }
 # In a conversation these confirm a feature build ("go", tools/feature_builder.py) instead of driving
 NOT_IN_CONVERSATION = ('go', 'los')

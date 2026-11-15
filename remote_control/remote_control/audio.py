@@ -16,7 +16,7 @@ import threading
 import time
 import wave
 
-from . import alsa, events, features, listeners, vocabulary, voice_protocol, word_recognizer
+from . import alsa, events, features, learning, listeners, vocabulary, voice_protocol, word_recognizer
 from .speech_level import SAMPLE_WIDTH, level_dbfs
 from .conversation import conversation
 
@@ -43,7 +43,7 @@ class Microphone(object):
         threading.Thread(target=self._loop, name='microphone', daemon=True).start()
 
     def wanted(self):
-        return any(features.enabled(name) for name in AUDIO_FEATURES) or self._wav is not None
+        return any(features.enabled(name) for name in AUDIO_FEATURES) or self._wav is not None or learning.session.active()
 
     # ---- wav recording (called by media.py) ----
     def start_wav(self, path):
@@ -103,6 +103,7 @@ class Microphone(object):
             self.status['level_dbfs'] = level
             recent_levels.append(level)
             self._write_wav(chunk)
+            learning.session.feed(chunk)
             self.clap_stop.feed(chunk, level, now)
             self.noise_alarm.feed(chunk, level, now)
             if features.enabled('claude_voice') or conversation.active():
@@ -124,7 +125,7 @@ class Microphone(object):
             self.status['speech_load'] = round((time.time() - started) / (CHUNK_BYTES / float(SAMPLE_WIDTH) / SAMPLE_RATE), 2)
 
     def describe(self):
-        status = dict(self.status, claps=self.clap_stop.claps, alarms=self.noise_alarm.alarms, conversation=conversation.describe(),
+        status = dict(self.status, claps=self.clap_stop.claps, alarms=self.noise_alarm.alarms, conversation=conversation.describe(), learning=learning.session.describe(),
                       vosk_model=os.path.isdir(SPEECH_MODELS['en']),
                       installed_languages=[language for language, model_dir in SPEECH_MODELS.items() if os.path.isdir(model_dir)])
         words = self.words.describe()

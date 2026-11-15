@@ -11,10 +11,11 @@ import threading
 import time
 from typing import Callable, List
 
-from . import events, features, media, rooms, speaker, voice_link
+from . import events, features, learning, media, rooms, speaker, voice_link
 from .car import car
 from .tracker import tracker
-from .vocabulary import Kind, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, help_text
+from .vocabulary import Kind, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, LANGUAGES, help_text
+from .voice_settings import voice_languages
 
 DRIVE_BURST_S = 1.4         # a spoken "vorwärts" drives this long; the watchdog stops the car after it
 KEEPALIVE_S = 0.2
@@ -39,6 +40,16 @@ def _drive_burst(direction):
 
 def _changed(args, current):
     return args['value'] if 'value' in args else current + args['delta']
+
+
+def _learn(args):
+    '''{"on": true, "language": "de", "group": "drive"} starts a learning session (language and group optional), "on": false ends it.'''
+    if not args['on']:
+        return learning.session.end()
+    language, group = args.get('language') or voice_languages()[0], args.get('group')
+    if language not in LANGUAGES or group not in (None,) + tuple(GROUP_NAMES):
+        raise KeyError(language if language not in LANGUAGES else group)
+    return learning.session.start(language, group)
 
 
 def switch_voice_server(action):
@@ -84,6 +95,7 @@ ACTIONS = {
     'treasure_next': Action(lambda args: tracker.next_treasure()),
     'voice_server': Action(lambda args: switch_voice_server(args['action']), web=False),
     'help':         Action(lambda args: speak_help(args['language']), web=False),
+    'learn':        Action(_learn),
 }
 
 

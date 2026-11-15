@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from . import commands, events, features, speaker, vocabulary, voice_protocol
+from . import commands, events, features, learning, phrase_check, speaker, vocabulary, voice_protocol
 from .car import car
 from .conversation import conversation, SHORT_S
 from .vocabulary import Kind, MIN_WORD_CONF, UNKNOWN
@@ -42,7 +42,6 @@ class WordRecognizer(object):
         self.model_dirs = model_dirs
         self.status = {'heard': None, 'heard_time': None, 'rejected': None, 'rejected_count': 0, 'wake_time': None,
                        'languages': [], 'missing_words': {}, 'error': None}
-        self._models = {}
         self._recognizers = []
         self._last_command = (None, 0.0, None)
 
@@ -54,14 +53,11 @@ class WordRecognizer(object):
             return
         try:
             import vosk
-            vosk.SetLogLevel(-1)
             for language in voice_languages():
                 model_dir = self.model_dirs.get(language)
                 if not model_dir or not os.path.isdir(model_dir):
                     continue
-                if language not in self._models:
-                    self._models[language] = vosk.Model(model_dir)
-                self._recognizers.append((language, self._recognizer(vosk, language, kinds)))
+                self._recognizers.append((language, self._recognizer(vosk, phrase_check.model(model_dir), language, kinds)))
         except Exception as error:  # vosk raises plain Exception for a bad model
             self.status['error'] = 'vosk not ready (%s) - run tools/install_extras.sh' % error
             return
@@ -69,8 +65,7 @@ class WordRecognizer(object):
         if not self._recognizers:
             self.status['error'] = 'no speech model - run tools/install_extras.sh'
 
-    def _recognizer(self, vosk, language, kinds):
-        model = self._models[language]
+    def _recognizer(self, vosk, model, language, kinds):
         phrases = vocabulary.grammar(language, kinds)
         self.status['missing_words'][language] = sorted({word for phrase in phrases[:-1] for word in phrase.split()
                                                          if hasattr(model, 'find_word') and model.find_word(word) < 0})
@@ -128,6 +123,8 @@ class WordRecognizer(object):
         self.status.update(heard=text, heard_time=time.strftime('%H:%M:%S'))
         spoken = vocabulary.phrases(language).get(text)
         muted = speaker.speaking.is_set()  # stop words stay live while the car speaks and drives
+        if learning.session.active() and not (spoken and spoken.name in learning.RUNS_WHILE_LEARNING):
+            muted = True  # the owner is repeating phrases: only stop and "Lernen beenden" act
         if spoken and spoken.kind == Kind.WAKE and not muted and _switch_on(spoken):
             self.status['wake_time'] = time.strftime('%H:%M:%S')
             events.add('audio', 'heard "%s"' % text)
