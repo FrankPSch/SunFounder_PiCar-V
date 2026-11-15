@@ -12,11 +12,31 @@ From Frank's requests on 2026-11-15, in his words:
 
 ## Current task (chat)
 
-Collaboration of Claude voice, voice builder and chat, phases 1-4 (CLAUDE.md "How we work"): built and pushed 2026-11-15
-(deploy/20261115-074837-chat). Then: a real learning session while driving (S.learning.session driving with Frank's voice), and the open
-requirements in project/generated/REQUIREMENTS.md that need the real car or Frank's ear.
+Architecture backlog (below): all 13 items built on 2026-11-15, each behind a switch that is off, tested on the digital twin
+(tools/twin.py) after every step, committed locally; waiting for Frank's push. Then Frank switches them on one by one (table below).
+Later: a real learning session while driving (S.learning.session driving with Frank's voice), and the open requirements in
+project/generated/REQUIREMENTS.md that need the real car or Frank's ear.
 
-## Architecture backlog (agreed with Frank in an ask loop, 2026-11-15; a list only, nothing built yet)
+### Switching the new ways on (one at a time; each switch off = the old way)
+
+| # | Switch | Where | What to check after switching on |
+|---|---|---|---|
+| 1 | `car_ssh_module` | PC: `voice\pc_switches.json` `{"car_ssh_module": true}`, then restart the voice server | a push: car update, deploy check 6 of 6 |
+| 2 | `voice_folder_by_kind` | PC: same file, restart the voice server and launcher | `voice\data`, `voice\logs`, `voice\generated` exist; the old files stay until you remove them |
+| 3 | `single_config_file` | dashboard switch | `picar-data/picar.json`; switches and settings survive a restart |
+| 4 | `data_files_as_pi` | dashboard switch | `ls -l /home/pi/picar-data`: everything pi |
+| 5 | `disk_warning` | dashboard switch | over 80 % full: warning with the biggest folders (the car is at 9 %) |
+| 6 | `voice_tool_registry` | PC: `voice\pc_switches.json`, restart the voice server | Claude voice: "wie ist der Projektstatus", a feature switch |
+| 7 | `service_list` | dashboard switch | section "Services": six loops running |
+| 8 | `state_sections` | dashboard switch | dashboard as before; CPU load of the Pi a little lower |
+| 9 | `detector_registry` | dashboard switch | ball, face, QR, markers as before |
+| 10 | `dashboard_calibration` | dashboard switch | section "Calibration": camera and steering (rear wheels stay on /cali/) |
+
+Items without a switch (tests and code layout only): wait-for checks and sim tests as unittest (tests/sim/), feature_builder
+in three (sim_runner.py, build_checks.py), car paths only in pc_settings. Kept until Frank says they can go: tools/retired/
+(old sim scripts, feature_builder before the split), the old SunFounder pages.
+
+## Architecture backlog (agreed with Frank in an ask loop, 2026-11-15; built the same day behind switches, see above)
 
 Main goal Frank picked: **data and logs in order**. Each item is one push, same behaviour, tests green between steps; a plan for Frank's OK before each.
 Order = suggested sequence (the earlier ones make the later ones smaller).
@@ -49,6 +69,7 @@ Not chosen (Frank, 2026-11-15): automatic deleting of old data (warn only); push
 
 | Date | What |
 |---|---|
+| 2026-11-15 | Architecture backlog, all 13 items behind switches (off): digital twin first (`3ee4738`: sim sensors, microphone, speaker, file owners, car-like picar-data, fake SSH car), then `afe2b44` tests/sim, `1e42b89` car_ssh + voice folder, `d9e820a` one config / files as pi / disk warning, `4cb7ab7` tool registry + builder split, `1416824` services / state sections / detectors / calibration. Twin finds: empty voice cache reported "natural" (fixed); the sim ball path depended on the clock (53-74 of 74 found, also before the changes; now starts with the sim) |
 | 2026-11-15 | Phase 1: CLAUDE.md, integration lock, measured car facts, wishes for the chat (`e5c9cda`) |
 | 2026-11-15 | Phases 2-4: requirements = tests with gap report, post-deploy check on the real car, Claude voice read tools, deploy summary with phrase-meaning gate, chat deploy news, version tags, rollback by voice, documents in project/ |
 | 2026-11-15 | Natural voice (Piper recordings on the car), all settings in the dashboard, wish list (`440b884` and before) |
@@ -57,5 +78,6 @@ Not chosen (Frank, 2026-11-15): automatic deleting of old data (warn only); push
 ## Known gotchas
 
 - Windows: text given to `ssh ... sh -s` must be bytes (CRLF breaks the car's shell); `\n` inside heredoc-written Python became real newlines (use the Edit tool).
-- The sim suites have timing checks (ball tracking, navigation): one clean run of three counts.
+- The sim tests (tests/sim/) have timing checks (ball tracking, navigation): one clean run of three counts; waits are for conditions.
+- Car switches are read when a module starts using them; PC switches (`voice\pc_switches.json`) when a PC tool starts.
 - The voice server runs the code of this checkout: a rebase here changes what the next voice server start loads.
