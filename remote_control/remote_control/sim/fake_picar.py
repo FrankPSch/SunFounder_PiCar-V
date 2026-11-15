@@ -60,7 +60,15 @@ class fileDB(object):
         return default_value
 
     def set(self, name, value):
-        pass
+        '''Like SunFounder's fileDB: the line "name = value" is replaced or added (the twin keeps calibrations).'''
+        try:
+            with open(self.db) as conf:
+                lines = [line for line in conf.read().splitlines() if line.strip()]
+        except FileNotFoundError:
+            lines = []
+        kept = [line for line in lines if line.split('=')[0].strip() != name]
+        with open(self.db, 'w') as conf:
+            conf.write('\n\n'.join(kept + ['%s = %s' % (name, value)]) + '\n\n')
 
 
 class _NoopCalibration(object):
@@ -70,11 +78,32 @@ class _NoopCalibration(object):
         raise AttributeError(name)
 
 
-class Front_Wheels(_NoopCalibration):
+class Front_Wheels(object):
+    '''Steering, with SunFounder's calibration: straight ahead, nudge left / right, ok saves turning_offset.'''
     def __init__(self, debug=False, db='config', bus_number=1, channel=0):
-        self.turning_offset = int(fileDB(db).get('turning_offset', default_value=0))
+        self.db = fileDB(db)
+        self.turning_offset = int(self.db.get('turning_offset', default_value=0))
         self.wheel = Servo(channel, offset=self.turning_offset)
         self.turning_max = 45
+        self.cali_turning_offset = self.turning_offset
+
+    def calibration(self):
+        self.turn(90)
+        self.cali_turning_offset = self.turning_offset
+
+    def cali_left(self):
+        self.cali_turning_offset -= 1
+        self.wheel.offset = self.cali_turning_offset
+        self.turn(90)
+
+    def cali_right(self):
+        self.cali_turning_offset += 1
+        self.wheel.offset = self.cali_turning_offset
+        self.turn(90)
+
+    def cali_ok(self):
+        self.turning_offset = self.cali_turning_offset
+        self.db.set('turning_offset', self.turning_offset)
 
     def turn(self, angle):
         self.wheel.write(max(90 - self.turning_max, min(90 + self.turning_max, angle)))

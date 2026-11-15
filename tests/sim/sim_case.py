@@ -48,7 +48,10 @@ class SimCase(unittest.TestCase):
             if predicate(current):
                 return current
             if time.time() > end:
-                self.fail('%s did not happen within %s s' % (what, seconds))
+                tracker, car = current['tracker'], current['car']
+                self.fail('%s did not happen within %s s (vision: mode %s, fps %s, found %s, error %s; camera pan %s tilt %s)'
+                          % (what, seconds, tracker.get('mode'), tracker.get('fps'), tracker.get('found'), tracker.get('error'),
+                             car.get('pan_ticks'), car.get('tilt_ticks')))
             time.sleep(POLL_S)
 
     def let_run(self, seconds, command=None, every_s=POLL_S):

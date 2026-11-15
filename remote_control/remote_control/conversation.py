@@ -12,7 +12,7 @@ import json
 import threading
 import time
 
-from . import commands, events, features, speaker, telemetry, voice_link, voice_protocol as protocol
+from . import commands, events, features, services, speaker, telemetry, voice_link, voice_protocol as protocol
 from .car import car
 from .voice_settings import speech_dbfs, voice_languages
 
@@ -58,7 +58,7 @@ class Conversation(object):
         self._silent_chunks = 0
         self._last_sentence_s = 0.0
         self._reply = []
-        threading.Thread(target=self._poll_news, name='voice-news', daemon=True).start()
+        services.start('voice-news', self._poll_news)
 
     # ---- asked by the word recogniser ----
     def active(self):

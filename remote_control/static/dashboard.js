@@ -200,6 +200,24 @@ function renderFeatures(featureList) {
   $('#pause-switch').hidden = !featureList.some((f) => f.name === 'dashboard_pause_switch' && f.on);
 }
 
+function renderCalibration(calibration) {
+  $('#calibration-box').hidden = !calibration;
+  if (calibration) $('#calibration').textContent = Object.entries(calibration).map(([name, value]) => `${name} ${value}`).join(' · ');
+}
+
+function renderServices(services) {
+  $('#services-box').hidden = !services;
+  if (services) {
+    $('#services').innerHTML = Object.entries(services).map(([name, s]) => `<div>${s.running ? '●' : '✖'} <b>${name}</b> since ${s.started}`
+      + (s.running ? '' : ` · ended ${s.ended}: ${(s.error || '').split('\n').filter(Boolean).pop() || ''}`) + '</div>').join('');
+  }
+}
+
+document.querySelectorAll('[data-cali]').forEach((button) => button.addEventListener('click', () => {
+  const [part, step] = button.dataset.cali.split(':');
+  send('calibrate', { part, step });
+}));
+
 function setIfIdle(input, value) { if (document.activeElement !== input) input.value = value; }
 
 function render(state) {
@@ -230,6 +248,8 @@ function render(state) {
       + ` · ${tracker.fps} fps` + (detectorNote ? ' · ' + detectorNote : '');
 
   renderExtras(state);
+  renderCalibration(state.calibration);
+  renderServices(state.services);
   renderFeatures(state.features);
   renderSettings(state.settings, state.setting_types);
   renderTiles(Object.assign({}, t, { car }));

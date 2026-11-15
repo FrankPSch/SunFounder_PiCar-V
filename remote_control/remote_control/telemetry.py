@@ -9,10 +9,9 @@ import re
 import shutil
 import socket
 import subprocess
-import threading
 import time
 
-from . import features
+from . import features, services
 from .car import car, SIM
 from .sim import hardware
 
@@ -253,4 +252,4 @@ def start(tracker_status):
     global _tracker_status
     _tracker_status = tracker_status
     latest.update(sample(include_slow=True))
-    threading.Thread(target=_loop, name='telemetry', daemon=True).start()
+    services.start('telemetry', _loop)

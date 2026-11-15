@@ -45,6 +45,21 @@
       <summary>All settings</summary>
       <div id="settings"></div>
     </details>
+    <details class="features" id="calibration-box" hidden>
+      <summary>Calibration (camera, steering)</summary>
+      <div id="calibration" class="list"></div>
+      <div class="calibration-buttons">
+        <b>Camera</b> <button data-cali="camera:start">start</button> <button data-cali="camera:left">◀</button> <button data-cali="camera:right">▶</button>
+        <button data-cali="camera:up">▲</button> <button data-cali="camera:down">▼</button> <button data-cali="camera:ok">save</button><br>
+        <b>Steering</b> <button data-cali="steering:start">start</button> <button data-cali="steering:left">◀</button>
+        <button data-cali="steering:right">▶</button> <button data-cali="steering:ok">save</button>
+        <small>Rear wheels: old page <a href="/cali/">/cali/</a> (they drive while calibrated).</small>
+      </div>
+    </details>
+    <details class="features" id="services-box" hidden>
+      <summary>Services (long-running loops)</summary>
+      <div id="services" class="list"></div>
+    </details>
   </section>
 
   <section class="controls panel">

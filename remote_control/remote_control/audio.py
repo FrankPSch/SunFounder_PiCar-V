@@ -16,7 +16,7 @@ import threading
 import time
 import wave
 
-from . import alsa, events, features, learning, listeners, vocabulary, voice_protocol, word_recognizer
+from . import alsa, events, features, learning, listeners, services, vocabulary, voice_protocol, word_recognizer
 from .speech_level import SAMPLE_WIDTH, level_dbfs
 from .conversation import conversation
 from .sim import hardware
@@ -41,7 +41,7 @@ class Microphone(object):
         self._wav = None
         self._wav_lock = threading.Lock()
         self._speech_pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(SPEECH_MODELS))
-        threading.Thread(target=self._loop, name='microphone', daemon=True).start()
+        services.start('microphone', self._loop)
 
     def wanted(self):
         return any(features.enabled(name) for name in AUDIO_FEATURES) or self._wav is not None or learning.session.active()

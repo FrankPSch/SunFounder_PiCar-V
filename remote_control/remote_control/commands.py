@@ -12,7 +12,7 @@ import time
 from typing import Callable, List
 
 from . import events, features, learning, media, rooms, speaker, spoken_texts, voice_link
-from .car import car
+from .car import car, cam, fw, CALIBRATION_FILE
 from .tracker import tracker
 from .vocabulary import Kind, MOVING_ACTIONS, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, LANGUAGES, help_text
 from .voice_settings import voice_languages
@@ -76,6 +76,31 @@ def _switch_voice_server(action):
     speaker.play_tones(speaker.Tone.START if action == 'start' else speaker.Tone.END)
 
 
+# Switch dashboard_calibration: the camera and the steering are calibrated on the dashboard (servos only). The rear
+# wheels drive while they are calibrated, so they stay on the old page /cali/.
+CALIBRATION_STEPS = {
+    'camera': {'start': cam.calibration, 'up': cam.cali_up, 'down': cam.cali_down, 'left': cam.cali_left, 'right': cam.cali_right, 'ok': cam.cali_ok},
+    'steering': {'start': fw.calibration, 'left': fw.cali_left, 'right': fw.cali_right, 'ok': fw.cali_ok},
+}
+CALIBRATION_NAMES = ('turning_offset', 'pan_offset', 'tilt_offset')
+
+
+def calibrate(part, step):
+    if not features.enabled('dashboard_calibration'):
+        raise ValueError('feature dashboard_calibration is off')
+    CALIBRATION_STEPS[part][step]()
+    events.add('calibration', '%s %s' % (part, step))
+
+
+def calibration():
+    '''The saved offsets (DATA_DIR/calibration) for the dashboard, or None while dashboard_calibration is off.'''
+    if not features.enabled('dashboard_calibration'):
+        return None
+    with open(CALIBRATION_FILE) as saved:
+        values = dict((line.split('=')[0].strip(), line.split('=')[1].strip()) for line in saved if '=' in line)
+    return {name: int(values.get(name, 0)) for name in CALIBRATION_NAMES}
+
+
 ACTIONS = {
     'drive':        Action(lambda args: car.drive(args['direction']), moves=True),
     'drive_burst':  Action(lambda args: _drive_burst(args['direction']), moves=True, web=False),
@@ -104,6 +129,7 @@ ACTIONS = {
     'conversation_end': Action(lambda args: end_conversation(), web=False),
     'help':         Action(lambda args: speak_help(args['language']), web=False),
     'learn':        Action(_learn),
+    'calibrate':    Action(lambda args: calibrate(args['part'], args['step'])),
 }
 
 

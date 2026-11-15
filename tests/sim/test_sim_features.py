@@ -20,12 +20,19 @@ TREASURE_COLOURS = ('red', 'orange', 'yellow', 'green', 'blue', 'purple')
 TREASURE_TRIES = 12
 LOUD_DBFS = -20
 MIC_RATE = 16000
+SERVICES_SOURCE = os.path.join(REPO, 'remote_control', 'remote_control', 'services.py')
 
 
 def registry_names():
     registry = next(node.value for node in ast.walk(ast.parse(open(FEATURES_SOURCE, encoding='utf-8').read()))
                     if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'FEATURES')
     return [key.value for key in registry.keys]
+
+
+def service_names():
+    '''services.SERVICES, read from the source (importing the car's modules here would write to the twin's data).'''
+    return next(ast.literal_eval(node.value) for node in ast.walk(ast.parse(open(SERVICES_SOURCE, encoding='utf-8').read()))
+                if isinstance(node, ast.Assign) and getattr(node.targets[0], 'id', None) == 'SERVICES')
 
 
 def setUpModule():
@@ -254,6 +261,72 @@ class Features(SimCase):
             self.wait_until(lambda state: not state['telemetry'].get('disk_warning'), 12, 'the warning gone')
         finally:
             os.remove(hardware_file)
+
+    @shows(('K.switch.service_list', 'on'), ('K.switch.service_list', 'off'))
+    def test_18_service_list(self):
+        self.assertIsNone(self.state()['services'], 'off: not in the state')
+        services = self.cmd('feature', name='service_list', on=True)['services']
+        self.assertEqual(list(services), list(service_names()), 'every loop runs, in the listed order')
+        self.assertTrue(all(service['running'] and not service['error'] for service in services.values()), services)
+        self.assertIn('id="services"', self.get('/').decode('utf-8'))
+        self.cmd('feature', name='service_list', on=False)
+
+    @shows(('K.switch.state_sections', 'on'), ('K.switch.state_sections', 'off'))
+    def test_19_state_sections(self):
+        before = self.state()
+        self.cmd('feature', name='state_sections', on=True)
+        self.assertEqual(set(self.state()), set(before), 'the same sections either way')
+        photo = self.cmd('photo')['media']['files'][0]['name']
+        self.assertTrue(photo.startswith('photo-'), 'a command answers with fresh sections')
+        polled = [self.state()['media']['files'][0]['name'] for _ in range(3)]
+        self.assertEqual(polled, [photo] * 3)
+        self.cmd('feature', name='state_sections', on=False)
+
+    @shows(('K.switch.detector_registry', 'on'), ('K.switch.detector_registry', 'off'))
+    def test_20_detector_registry_finds_the_same(self):
+        self.cmd('feature', name='detector_registry', on=True)
+        try:
+            self.cmd('cam_center')
+            self.cmd('feature', name='qr_reader', on=True)
+            self.assertEqual(self.wait_until(lambda state: state['tracker']['qr'], what='a QR code')['tracker']['qr']['text'], 'picar-sim-qr')
+            self.cmd('feature', name='markers', on=True)
+            current = self.wait_until(lambda state: state['tracker']['markers'], what='a marker')
+            self.assertEqual([marker['id'] for marker in current['tracker']['markers']], [3])
+            self.cmd('feature', name='markers', on=False)
+            self.wait_until(lambda state: state['tracker']['markers'] == [], what='markers cleared when off')
+            self.cmd('feature', name='qr_reader', on=False)
+            self.cmd('cam_center')
+            self.cmd('track_color', name='red')
+            self.cmd('feature', name='ball_tracking', on=True)
+            self.wait_until(lambda state: state['tracker']['found'], 10, 'the red ball')
+            self.cmd('feature', name='face_tracking', on=True)
+            self.wait_until(lambda state: state['tracker']['detectors'].get('face'), what='the face detector status')
+            self.cmd('feature', name='face_tracking', on=False)
+            self.wait_until(lambda state: not state['tracker']['found'], what='nothing followed')
+        finally:
+            self.cmd('feature', name='detector_registry', on=False)
+        self.assertEqual(self.state()['car']['drive_direction'], 0)
+
+    @shows(('K.switch.dashboard_calibration', 'on'), ('K.switch.dashboard_calibration', 'off'), ('K.command.calibrate', 'run'))
+    def test_21_dashboard_calibration(self):
+        self.assert_refused('calibrate', part='camera', step='start')        # off
+        self.assertIsNone(self.state()['calibration'])
+        before = self.cmd('feature', name='dashboard_calibration', on=True)['calibration']
+        for step in ('start', 'left', 'left', 'up', 'ok'):
+            self.cmd('calibrate', part='camera', step=step)
+        for step in ('start', 'right', 'ok'):
+            current = self.cmd('calibrate', part='steering', step=step)
+        self.assertEqual(current['calibration'], dict(before, pan_offset=before['pan_offset'] + 2, tilt_offset=before['tilt_offset'] + 1,
+                                                      turning_offset=before['turning_offset'] + 1), 'saved in the calibration file')
+        self.assert_refused('calibrate', part='rear', step='start')          # the rear wheels drive: old page only
+        self.assertIn('id="calibration"', self.get('/').decode('utf-8'))
+        for step in ('start', 'right', 'right', 'down', 'ok'):
+            self.cmd('calibrate', part='camera', step=step)
+        for step in ('start', 'left', 'ok'):
+            self.cmd('calibrate', part='steering', step=step)
+        self.assertEqual(self.state()['calibration'], before, 'back to the old offsets')
+        self.cmd('feature', name='dashboard_calibration', on=False)
+        self.assertEqual(self.state()['car']['drive_direction'], 0)
 
     def test_99_events_logged(self):
         self.assertGreaterEqual(len(self.state()['events']), 5)

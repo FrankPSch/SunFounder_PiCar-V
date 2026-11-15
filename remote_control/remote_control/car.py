@@ -10,7 +10,7 @@ import shutil
 import threading
 import time
 
-from . import features
+from . import features, services
 
 SIM = os.environ.get('PICAR_SIM') == '1'
 if SIM:
@@ -68,7 +68,7 @@ class Car(object):
         self.watchdog_stops = 0
         self.last_event = 'started'
         self.ready()
-        threading.Thread(target=self._watchdog_loop, name='watchdog', daemon=True).start()
+        services.start('watchdog', self._watchdog_loop)
 
     # ---- rear wheels ----
     def drive(self, direction):

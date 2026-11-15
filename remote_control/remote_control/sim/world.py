@@ -12,6 +12,7 @@ WORLD_WIDTH, WORLD_HEIGHT = 1600, 1200
 VIEW_WIDTH, VIEW_HEIGHT = 320, 240
 PIXELS_PER_TICK = 2.0
 BALL_RADIUS = 18
+STARTED = time.time()        # the ball's path starts with the simulated car: every test run sees the same path
 
 _rng = np.random.RandomState(7)
 _room = np.full((WORLD_HEIGHT, WORLD_WIDTH, 3), (90, 110, 120), np.uint8)
@@ -40,7 +41,7 @@ if hasattr(cv2, 'QRCodeEncoder'):
 
 
 def ball_position(at_time=None):
-    t = time.time() if at_time is None else at_time
+    t = (time.time() if at_time is None else at_time) - STARTED
     return (WORLD_WIDTH / 2 + 250 * math.sin(t * 0.35), WORLD_HEIGHT / 2 + 150 * math.sin(t * 0.22 + 1.0))
 
 

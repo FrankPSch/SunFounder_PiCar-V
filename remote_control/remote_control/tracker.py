@@ -7,83 +7,35 @@ Vision loop on the Pi (no PC). One frame grab from the mjpg-streamer snapshot UR
   treasure_hunt   - names a colour; found + centred for TREASURE_FRAMES frames = point, next colour
   stuck_detection - while driving, an image that stops changing means blocked -> stop
 Each detector reports "missing" instead of crashing when its model/data file is not installed.
+The detectors are one module each in detectors/ (switch detector_registry: run from detectors.DETECTORS; off: the
+old fixed order below, calling the same functions).
 '''
-import os
 import random
-import threading
 import time
 import urllib.request
 
 import cv2
 import numpy as np
 
-from . import events, features, rooms, spoken_texts
+from . import detectors, events, features, rooms, services, spoken_texts
 from .car import car, SIM, DEGREES_PER_TICK, STEER_MIN, STEER_MAX
+from .detectors import animal, ball, face, markers, qr, treasure
 
 SNAPSHOT_URL = 'http://127.0.0.1:8080/?action=snapshot'
-WORK_WIDTH, WORK_HEIGHT = 160, 120
 CENTER_TOLERANCE = 0.05          # dead band around the image centre, fraction of width/height
-MIN_RADIUS_PX = 3
 NEAR_SIZE = 0.38                 # tracking_drive stops when the target is this wide (fraction of image width)
 DRIVE_SPEED = 30
-QR_EVERY_N_FRAMES = 3
-TREASURE_FRAMES = 5
-TREASURE_MIN_RADIUS_PX = 8
 STUCK_SECONDS = 1.5
 STUCK_MEAN_DIFF = 2.0            # mean abs grey difference (0-255) between frames while driving
 
-COLOR_PRESETS = {
-    'red':    [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (179, 255, 255))],
-    'orange': [((10, 120, 90), (22, 255, 255))],
-    'yellow': [((22, 100, 100), (35, 255, 255))],
-    'green':  [((36, 80, 60), (85, 255, 255))],
-    'blue':   [((95, 120, 60), (130, 255, 255))],
-    'purple': [((130, 80, 60), (165, 255, 255))],
-}
-MODEL_DIR = os.path.join(features.DATA_DIR, 'models')
-SSD_PROTOTXT = os.path.join(MODEL_DIR, 'MobileNetSSD_deploy.prototxt')
-SSD_WEIGHTS = os.path.join(MODEL_DIR, 'MobileNetSSD_deploy.caffemodel')
-SSD_CLASSES = ['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow',
-               'diningtable', 'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
-ANIMAL_TARGETS = ('dog', 'cat', 'person')
-SSD_MIN_CONFIDENCE = 0.5
-FACE_CASCADE_NAME = 'haarcascade_frontalface_default.xml'
-FACE_CASCADE_DIRS = [getattr(getattr(cv2, 'data', None), 'haarcascades', ''), '/usr/share/opencv4/haarcascades/',
-                     '/usr/share/opencv/haarcascades/']
+COLOR_PRESETS, ANIMAL_TARGETS = ball.COLOR_PRESETS, animal.ANIMAL_TARGETS   # used outside (tests, spoken_texts)
+hsv_range_around, find_ball = ball.hsv_range_around, ball.find_ball
+WORK_WIDTH, WORK_HEIGHT = ball.WORK_WIDTH, ball.WORK_HEIGHT
 VISION_FEATURES = ('ball_tracking', 'face_tracking', 'animal_tracking', 'qr_reader', 'markers',
                    'treasure_hunt', 'room_navigation')
 assert set(VISION_FEATURES) <= set(features.FEATURES), 'VISION_FEATURES names a feature missing from FEATURES'
 assert set(features.TRACKING_FEATURES) <= set(VISION_FEATURES)
-
-
-def hsv_range_around(hue, saturation, value, hue_margin=10):
-    low_s, low_v = max(int(saturation) - 60, 60), max(int(value) - 60, 50)
-    low_h, high_h = int(hue) - hue_margin, int(hue) + hue_margin
-    if low_h < 0:
-        return [((0, low_s, low_v), (high_h, 255, 255)), ((180 + low_h, low_s, low_v), (179, 255, 255))]
-    if high_h > 179:
-        return [((low_h, low_s, low_v), (179, 255, 255)), ((0, low_s, low_v), (high_h - 180, 255, 255))]
-    return [((low_h, low_s, low_v), (high_h, 255, 255))]
-
-
-def find_ball(bgr_frame, hsv_ranges):
-    '''Returns (x, y, radius) in work-image pixels, or None.'''
-    small = cv2.resize(bgr_frame, (WORK_WIDTH, WORK_HEIGHT))
-    hsv = cv2.cvtColor(cv2.GaussianBlur(small, (5, 5), 0), cv2.COLOR_BGR2HSV)
-    mask = np.zeros(hsv.shape[:2], np.uint8)
-    for low, high in hsv_ranges:
-        mask |= cv2.inRange(hsv, np.array(low, np.uint8), np.array(high, np.uint8))
-    mask = cv2.dilate(cv2.erode(mask, None, iterations=1), None, iterations=2)
-    contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
-    if not contours:
-        return None
-    (x, y), radius = cv2.minEnclosingCircle(max(contours, key=cv2.contourArea))
-    return (x, y, radius) if radius >= MIN_RADIUS_PX else None
-
-
-def _box_target(x, y, width, height, frame_width, frame_height, label):
-    return {'x': (x + width / 2) / frame_width, 'y': (y + height / 2) / frame_height,
-            'w': width / frame_width, 'h': height / frame_height, 'size': width / frame_width, 'label': label}
+assert set(VISION_FEATURES) == {name for detector in detectors.DETECTORS for name in detector.SWITCHES}, 'VISION_FEATURES and the detectors differ'
 
 
 class Tracker(object):
@@ -94,12 +46,10 @@ class Tracker(object):
         self.status = {'found': False, 'fps': 0.0, 'frames': 0, 'error': None, 'target': None,
                        'markers': [], 'qr': None, 'stuck_stops': 0,
                        'treasure': {'color': None, 'score': 0, 'progress': 0}, 'detectors': {}}
-        self._face_cascade = None
-        self._ssd = None
         self._previous_grey = None
         self._still_since = None
         features.on_change(self._on_feature_change)
-        threading.Thread(target=self._loop, name='vision', daemon=True).start()
+        services.start('vision', self._loop)
 
     # ---- settings ----
     def hsv_ranges(self, color=None):
@@ -144,72 +94,21 @@ class Tracker(object):
         if name == 'room_navigation' and not is_on:
             rooms.cancel('stopped (feature off)')
 
-    # ---- detectors ----
+    # ---- detectors (the old fixed order calls them; the code is in detectors/) ----
     def _detect_face(self, frame):
-        if self._face_cascade is None:
-            path = next((os.path.join(folder, FACE_CASCADE_NAME) for folder in FACE_CASCADE_DIRS
-                         if folder and os.path.exists(os.path.join(folder, FACE_CASCADE_NAME))), None)
-            if not path:
-                self.status['detectors']['face'] = 'missing ' + FACE_CASCADE_NAME + ' (apt install opencv-data)'
-                return None
-            self._face_cascade = cv2.CascadeClassifier(path)
-            self.status['detectors']['face'] = 'ok'
-        grey = cv2.cvtColor(cv2.resize(frame, (320, 240)), cv2.COLOR_BGR2GRAY)
-        faces = self._face_cascade.detectMultiScale(grey, scaleFactor=1.2, minNeighbors=5, minSize=(24, 24))
-        if len(faces) == 0:
-            return None
-        x, y, width, height = max(faces, key=lambda face: face[2] * face[3])
-        return _box_target(x, y, width, height, 320, 240, 'face')
+        return face.detect(self, frame)
 
     def _detect_animal(self, frame):
-        if self._ssd is None:
-            if not (os.path.exists(SSD_PROTOTXT) and os.path.exists(SSD_WEIGHTS)):
-                self.status['detectors']['animal'] = 'missing MobileNet-SSD in %s (tools/install_extras.sh)' % MODEL_DIR
-                return None
-            self._ssd = cv2.dnn.readNetFromCaffe(SSD_PROTOTXT, SSD_WEIGHTS)
-            self.status['detectors']['animal'] = 'ok'
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
-        self._ssd.setInput(blob)
-        detections = self._ssd.forward()[0, 0]
-        wanted = SSD_CLASSES.index(self.animal)
-        best = None
-        for _, class_id, confidence, left, top, right, bottom in detections:
-            if int(class_id) == wanted and confidence >= SSD_MIN_CONFIDENCE and (best is None or confidence > best[0]):
-                best = (confidence, left, top, right, bottom)
-        if not best:
-            return None
-        confidence, left, top, right, bottom = best
-        target = _box_target(left, top, right - left, bottom - top, 1.0, 1.0, '%s %.0f%%' % (self.animal, confidence * 100))
-        return target
+        return animal.detect(self, frame)
 
     def _detect_color(self, frame, color):
-        ball = find_ball(frame, self.hsv_ranges(color))
-        if not ball:
-            return None
-        x, y, radius = ball
-        target = _box_target(x - radius, y - radius, 2 * radius, 2 * radius, WORK_WIDTH, WORK_HEIGHT, color)
-        target['radius_px'] = round(radius, 1)
-        return target
+        return ball.detect_color(self, frame, color)
 
     def _detect_markers(self, frame):
-        small = cv2.resize(frame, (320, 240))
-        dictionary = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
-        corners, ids, _ = cv2.aruco.detectMarkers(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), dictionary,
-                                                  parameters=cv2.aruco.DetectorParameters_create())
-        markers = []
-        for marker_corners, marker_id in zip(corners, [] if ids is None else ids.flatten()):
-            points = marker_corners[0]
-            side = np.mean([np.linalg.norm(points[i] - points[(i + 1) % 4]) for i in range(4)])
-            markers.append({'id': int(marker_id), 'x': float(points[:, 0].mean() / 320), 'y': float(points[:, 1].mean() / 240),
-                            'size': round(float(side / 320), 3)})
-        return markers
+        return markers.find(frame)
 
     def _read_qr(self, frame):
-        text, points, _ = cv2.QRCodeDetector().detectAndDecode(frame)
-        if text and (not self.status['qr'] or self.status['qr']['text'] != text):
-            events.add('vision', 'QR code: ' + text, say=spoken_texts.EVENTS['qr_code'])
-        if text:
-            self.status['qr'] = {'text': text, 'time': time.strftime('%H:%M:%S')}
+        qr.detect(self, frame)
 
     # ---- loop ----
     def _active(self):
@@ -242,13 +141,16 @@ class Tracker(object):
     def _process(self, frame):
         if features.enabled('stuck_detection') and not SIM:
             self._check_stuck(frame)
+        if features.enabled('detector_registry'):
+            self._process_registered(frame)
+            return
         markers = []
         if features.enabled('markers') or features.enabled('room_navigation'):
             markers = self._detect_markers(frame)
             rooms.observe(markers)
             rooms.navigate_step(markers)
         self.status['markers'] = markers
-        if features.enabled('qr_reader') and self.status['frames'] % QR_EVERY_N_FRAMES == 0:
+        if features.enabled('qr_reader') and self.status['frames'] % qr.EVERY_N_FRAMES == 0:
             self._read_qr(frame)
 
         navigating = rooms.nav['state'] in ('scan', 'approach')
@@ -265,6 +167,23 @@ class Tracker(object):
             self.status.update(found=False, target=None)
             return
         if not navigating:
+            self._follow(target)
+
+    def _process_registered(self, frame):
+        '''Switch detector_registry: every active detector in detectors.DETECTORS; the first active target is followed.'''
+        target, following = None, False
+        for detector in detectors.DETECTORS:
+            if not detectors.active(detector, features.enabled):
+                getattr(detector, 'off', lambda tracker: None)(self)
+            elif self.status['frames'] % detector.EVERY_N_FRAMES:
+                continue
+            elif detector.KIND == 'extra':
+                detector.detect(self, frame)
+            elif not following:
+                target, following = detector.detect(self, frame), True
+        if not following:
+            self.status.update(found=False, target=None)
+        elif rooms.nav['state'] not in ('scan', 'approach'):
             self._follow(target)
 
     def _check_stuck(self, frame):
@@ -292,19 +211,7 @@ class Tracker(object):
         events.add('treasure', 'find something %s!' % color, say=spoken_texts.treasure(color))
 
     def _treasure_step(self, frame):
-        treasure = self.status['treasure']
-        if not treasure['color']:
-            self.next_treasure()
-        target = self._detect_color(frame, treasure['color'])
-        if target and target['radius_px'] >= TREASURE_MIN_RADIUS_PX and abs(target['x'] - 0.5) < 0.12 and abs(target['y'] - 0.5) < 0.12:
-            treasure['progress'] += 1
-            if treasure['progress'] >= TREASURE_FRAMES:
-                treasure['score'] += 1
-                events.add('treasure', 'found %s! score %d' % (treasure['color'], treasure['score']), say=spoken_texts.EVENTS['treasure_found'])
-                self.next_treasure()
-        else:
-            treasure['progress'] = 0
-        return target
+        return treasure.detect(self, frame)
 
     def _follow(self, target):
         if target is None:

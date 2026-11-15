@@ -106,6 +106,7 @@ API = [
     ({'cmd': 'learn', 'on': True}, ('calls', ['learn start de'])),
     ({'cmd': 'learn', 'on': True, 'language': 'en', 'group': 'camera'}, ('calls', ['learn start en'])),
     ({'cmd': 'learn', 'on': False}, ('calls', ['learn end'])),
+    ({'cmd': 'calibrate', 'part': 'camera', 'step': 'start'}, ('calls', ['calibrate camera start'])),
 ]
 
 
@@ -154,6 +155,7 @@ class CommandTest(unittest.TestCase):
             mock.patch.object(tracker, 'next_treasure', record('next_treasure')),
             mock.patch.object(commands, 'switch_voice_server', lambda action: self.calls.append('server ' + action)),
             mock.patch.object(commands, 'end_conversation', record('conversation end')),
+            mock.patch.object(commands, 'calibrate', lambda part, step: self.calls.append('calibrate %s %s' % (part, step))),
             mock.patch.object(conversation, 'start', lambda *args: self.calls.append('conversation start')),
             mock.patch.object(conversation, 'active', lambda: False),
         ]

@@ -9,11 +9,13 @@ JSON API and the dashboard page.
 import json
 import os
 import subprocess
+import threading
+import time
 
 from django.http import FileResponse, Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render_to_response
 
-from . import audio, commands, events, features, media, rooms, speaker, spoken_texts, telemetry
+from . import audio, commands, events, features, media, rooms, services, speaker, spoken_texts, telemetry
 from .car import car, SIM
 from .tracker import tracker
 
@@ -44,14 +46,33 @@ def dashboard(request):
     return render_to_response('dashboard.html', {'sim': SIM, 'asset_version': asset_version})
 
 
-def state(request):
-    return JsonResponse({
-        'car': car.state(), 'tracker': tracker.describe(), 'features': features.describe(),
-        'telemetry': telemetry.latest, 'stream_url': _stream_url(request),
-        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
-        'events': events.recent(), 'settings': {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS},
-        'setting_types': {name: {'type': kind.__name__, 'help': events.SETTING_HELP[name]} for name, kind in events.EDITABLE_SETTINGS.items()},
-    })
+SLOW_SECTION_S = 3          # switch state_sections: how old a slow section may be in a poll
+# The sections of /api/state: name -> (how it is made, slow). Slow sections read files or folders; with the switch
+# state_sections on, a poll gets them at most SLOW_SECTION_S old, and every command reads all of them fresh.
+STATE_SECTIONS = {
+    'car': (car.state, False), 'tracker': (tracker.describe, False), 'features': (features.describe, False),
+    'telemetry': (lambda: telemetry.latest, False), 'audio': (audio.microphone.describe, False), 'events': (events.recent, False),
+    'speaker': (speaker.describe, True), 'media': (media.describe, True), 'rooms': (rooms.describe, True),
+    'settings': (lambda: {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS}, True),
+    'setting_types': (lambda: {name: {'type': kind.__name__, 'help': events.SETTING_HELP[name]} for name, kind in events.EDITABLE_SETTINGS.items()}, True),
+    'services': (services.describe, True), 'calibration': (commands.calibration, True),
+}
+_slow_sections = {'made': 0.0, 'values': {}}
+_slow_lock = threading.Lock()
+
+
+def _sections(fresh):
+    if not features.enabled('state_sections'):
+        return {name: make() for name, (make, _) in STATE_SECTIONS.items()}
+    with _slow_lock:
+        if fresh or time.time() - _slow_sections['made'] > SLOW_SECTION_S:
+            _slow_sections.update(made=time.time(), values={name: make() for name, (make, slow) in STATE_SECTIONS.items() if slow})
+        slow_values = dict(_slow_sections['values'])
+    return dict({name: make() for name, (make, slow) in STATE_SECTIONS.items() if not slow}, **slow_values)
+
+
+def state(request, fresh=False):
+    return JsonResponse(dict(_sections(fresh), stream_url=_stream_url(request)))
 
 
 def history(request):
@@ -66,7 +87,7 @@ def command(request):
         commands.run(args['cmd'], args)
     except (KeyError, ValueError, TypeError) as error:
         return HttpResponseBadRequest('bad command: %s' % error)
-    return state(request)
+    return state(request, fresh=True)
 
 
 def media_file(request, name):

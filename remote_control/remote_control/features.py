@@ -61,6 +61,10 @@ FEATURES = {
     'single_config_file': (False, 'Switches and settings in one file picar.json (with a version) instead of features.json + settings.json'),
     'data_files_as_pi':   (False, 'Data files in picar-data belong to pi, not root, so SSH and the PC tools can change them'),
     'disk_warning':       (False, 'Warn on the dashboard and to Claude when the SD card is 80 % full, with the biggest folders'),
+    'detector_registry':  (False, 'Camera detectors run from the registry (one module each in detectors/) instead of the old fixed order'),
+    'dashboard_calibration': (False, 'Calibrate the camera and the steering on the dashboard (the old page /cali/ stays for the rear wheels)'),
+    'state_sections':     (False, 'Dashboard polls read the slow parts of the car state (files, folders) at most every 3 s: less CPU on the Pi'),
+    'service_list':       (False, 'Show the car\'s long-running loops (watchdog, microphone, vision, ...) with their state on the dashboard'),
 }
 TRACKING_FEATURES = ('ball_tracking', 'face_tracking', 'animal_tracking')
 

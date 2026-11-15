@@ -9,7 +9,7 @@ import threading
 import time
 import urllib.request
 
-from . import events, features, spoken_texts
+from . import events, features, services, spoken_texts
 from .car import SIM
 
 MEDIA_DIR = os.path.join(features.DATA_DIR, 'media')
@@ -130,4 +130,4 @@ def describe():
             'timelapse_seconds': int(events.settings().get('timelapse_seconds', DEFAULT_TIMELAPSE_SECONDS))}
 
 
-threading.Thread(target=_timelapse_loop, name='timelapse', daemon=True).start()
+services.start('timelapse', _timelapse_loop)
