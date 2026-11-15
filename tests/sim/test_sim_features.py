@@ -194,8 +194,9 @@ class Features(SimCase):
         current = self.state()
         self.assertEqual(set(current['setting_types']), set(current['settings']), 'every setting is listed')
         dashboard_html = self.get('/').decode('utf-8')
-        for marker in ('id="features"', 'id="settings"') + tuple('id="chart-%s"' % name for name in ('temp', 'wifi', 'ram', 'power')):
+        for marker in ('id="features"', 'id="settings"', 'href="/cali/"') + tuple('id="chart-%s"' % name for name in ('temp', 'wifi', 'ram', 'power')):
             self.assertIn(marker, dashboard_html)
+        self.assertIn(b'cali_ok', self.get('/cali/'), 'the calibration page the dashboard links to')
         self.assertEqual(self.cmd('setting', name='voice_languages', value='de,en')['settings']['voice_languages'], 'de,en')
         self.cmd('setting', name='voice_languages', value='de')
         history_columns = json.loads(self.get('/api/history?minutes=60').decode('utf-8'))['columns']
