@@ -6,6 +6,7 @@ Usage: python tools/run_tests.py        exit code 0 = all passed'''
 import os
 import subprocess
 import sys
+import tempfile
 
 import feature_builder
 import pc_settings
@@ -26,7 +27,8 @@ def run_unit_tests(python, folder, extra_env):
 
 def main():
     results = [run_unit_tests(feature_builder.SIM_PYTHON, 'tests', {}),
-               run_unit_tests(pc_settings.VOICE_PYTHON, os.path.join('tests', 'pc'), {'CLAUDE_VOICE_MODEL': 'echo'}),
+               run_unit_tests(pc_settings.VOICE_PYTHON, os.path.join('tests', 'pc'), {'CLAUDE_VOICE_MODEL': 'echo',
+                                                                              'PICAR_DIR': tempfile.mkdtemp(prefix='picar_wishes_')}),
                feature_builder.sim_tests_pass(pc_settings.REPO, print)[0]]
     print('RESULT:', 'ALL PASS' if all(results) else 'FAILED')
     return 0 if all(results) else 1

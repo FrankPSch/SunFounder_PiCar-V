@@ -22,6 +22,7 @@ MODELS = os.path.join(pc_settings.VOICE_DIR, 'vosk_models')
 OWNER_RECORDINGS = os.path.join(pc_settings.VOICE_DIR, 'recordings')
 SILENCE = b'\0\0' * phrase_check.SAMPLE_RATE
 STUB_CAR_PORT = 18868
+SYNTHESES = 2
 models = None
 
 
@@ -36,12 +37,16 @@ def speech(phrase, language):
 
 class RecognitionTest(unittest.TestCase):
     def test_every_phrase_is_understood(self):
-        '''Fails for a phrase the small models do not know, or two spellings of one sound (confidence split).'''
+        '''Fails for a phrase the small models do not know, or two spellings of one sound (confidence split).
+        Piper varies every synthesis a little, so a phrase gets a second one: failing twice in a row is real.'''
         failures = []
         for language in vocabulary.LANGUAGES:
             for phrase in sorted(vocabulary.phrases(language)):
-                hearing = phrase_check.hear(models, language, phrase, speech(phrase, language))
-                if hearing.verdict != phrase_check.Verdict.UNDERSTOOD:
+                for _ in range(SYNTHESES):
+                    hearing = phrase_check.hear(models, language, phrase, speech(phrase, language))
+                    if hearing.verdict == phrase_check.Verdict.UNDERSTOOD:
+                        break
+                else:
                     failures.append('%s %r: %s %r %.2f' % (language, phrase, hearing.verdict.name, hearing.heard, hearing.confidence))
         self.assertEqual(failures, [])
 

@@ -5,6 +5,7 @@ Features requested by voice, for tools/voice_server.py. Three spoken steps, each
   2. "go"     -> Claude Code builds it on a branch, then this checks and tests it (start)
   3. "deploy" -> master + release are pushed and tools/deploy.sh updates the car (deploy)
 A new feature always arrives switched off; the owner turns it on by voice or in the dashboard.
+Every step of every wish goes to the wish list (wish_list.py: PiCar_Wishes.md), so a chat on the PC can follow them.
 
 The checks do not trust the builder: protected files unchanged, existing switches and stop words unchanged,
 exactly one new switch with default off, both simulation test suites pass.
@@ -22,6 +23,7 @@ import time
 import urllib.request
 
 import pc_settings
+import wish_list
 
 WORK_DIR = os.environ.get('PICAR_WORK_DIR', pc_settings.VOICE_DIR)
 REPO = os.path.join(WORK_DIR, 'repo')
@@ -42,7 +44,7 @@ FEATURES_FILE = 'remote_control/remote_control/features.py'
 COMMANDS_FILE = 'remote_control/remote_control/commands.py'
 VOCABULARY_FILE = 'remote_control/remote_control/vocabulary.py'
 PROTECTED = ('tools/deploy.sh', 'tools/picar-update.sh', 'tools/systemd/', 'tools/voice_server.py', 'tools/voice_server.bat',
-             'tools/feature_builder.py', 'tools/voice_launcher.py', 'tools/car_tunnel.py', 'tools/install_voice_launcher.bat',
+             'tools/feature_builder.py', 'tools/wish_list.py', 'tools/voice_launcher.py', 'tools/car_tunnel.py', 'tools/install_voice_launcher.bat',
              'remote_control/remote_control/voice_protocol.py')
 GO = re.compile(r'\b(go+m?|goh|gou)\b', re.IGNORECASE)  # Whisper also writes a German "go" as "Goom"
 DEPLOY = re.compile(r'd[ei]e?p?l(oy|oi|eu|ey)', re.IGNORECASE)
@@ -198,12 +200,19 @@ def sim_tests_pass(worktree, log):
 
 
 class Builder(object):
-    def __init__(self, announce):
+    def __init__(self, announce, wishes=None):
         self._announce = announce  # announce(language, text): spoken by the car at its next poll
+        self._wishes = wishes or wish_list.WishList(pc_settings.PICAR_DIR)
         self._lock = threading.Lock()
         self.state = 'idle'
-        self.request = None        # dict: title, understanding, options, language, option, feature, branch, worktree, log
+        self.request = None        # dict: id, title, understanding, options, language, option, feature, branch, worktree, log
         self.detail = ''
+
+    def _set_state(self, state, detail='', **fields):
+        '''The new state, written to the wish list first (with what became known, wish_list.STEP_FIELDS): whoever
+        sees the new state finds it in the list too.'''
+        self._wishes.record(self.request['id'], state, detail=detail, **fields)
+        self.state, self.detail = state, detail
 
     def describe(self):
         if self.request is None:
@@ -219,8 +228,10 @@ class Builder(object):
         with self._lock:
             if self.state in ('building', 'deploying'):
                 return 'Not saved: "%s" is %s right now.' % (self.request['title'], self.state)
-            self.request = {'title': title, 'understanding': understanding, 'options': options, 'language': language}
-            self.state, self.detail = 'proposed', ''
+            if self.state == 'proposed':
+                self._set_state('dropped', 'replaced by "%s" before "go"' % title)
+            self.request = {'id': wish_list.new_id(), 'title': title, 'understanding': understanding, 'options': options, 'language': language}
+            self._set_state('proposed', title=title, understanding=understanding, options=options, language=language)
         return 'Saved. Now read your understanding and the numbered options to the owner and ask them to say "go" with the option.'
 
     def start(self, option, owner_words):
@@ -230,7 +241,7 @@ class Builder(object):
             if not GO.search(owner_words):
                 return 'Not started: the owner has not said "go". Ask them to say "go".'
             self.request['option'] = option
-            self.state, self.detail = 'building', 'Claude Code is working on it, this takes a few minutes'
+            self._set_state('building', 'Claude Code is working on it, this takes a few minutes', option=option)
         threading.Thread(target=self._build, daemon=True).start()
         return 'Build started. Tell the owner it takes a few minutes and that the car will say when it is ready.'
 
@@ -240,7 +251,7 @@ class Builder(object):
                 return 'Nothing to deploy (state: %s).' % self.state
             if not DEPLOY.search(owner_words):
                 return 'Not deployed: the owner has not said "deploy".'
-            self.state, self.detail = 'deploying', 'the car restarts in about a minute'
+            self._set_state('deploying', 'the car restarts in about a minute')
         threading.Thread(target=self._deploy, daemon=True).start()
         return 'Deploy started. Tell the owner the car restarts and will say when the update is installed.'
 
@@ -266,6 +277,7 @@ class Builder(object):
             _git('worktree', 'add', '-q', '-b', request['branch'], request['worktree'], 'origin/master')
             base = _git('rev-parse', 'origin/master')
             self._log('build %s from %s' % (request['branch'], base[:7]))
+            self._set_state('building', 'Claude Code is working on it, from %s' % base[:7], branch=request['branch'])
             session = None
             prompt = BUILDER_PROMPT.format(title=request['title'], understanding=request['understanding'], option=request['option'],
                                            features_file=FEATURES_FILE, commands_file=COMMANDS_FILE, vocabulary_file=VOCABULARY_FILE, protected=', '.join(PROTECTED))
@@ -285,11 +297,11 @@ class Builder(object):
             _git('add', '-A', cwd=request['worktree'])
             _git('commit', '-q', '-m', 'Voice feature %s: %s\n\n%s\nOption: %s\nNew switch %s, off by default. Built by Claude Code from a spoken request.\n\n%s'
                  % (feature, request['title'], request['understanding'], request['option'], feature, CO_AUTHOR), cwd=request['worktree'])
-            self.state, self.detail = 'built', 'commit %s on %s' % (_git('rev-parse', '--short', 'HEAD', cwd=request['worktree']), request['branch'])
+            self._set_state('built', 'commit %s on %s' % (_git('rev-parse', '--short', 'HEAD', cwd=request['worktree']), request['branch']), feature=feature)
             self._log(self.detail)
             self._say('built')
         except (BuildError, OSError, subprocess.SubprocessError, ValueError, SyntaxError) as error:
-            self.state, self.detail = 'failed', str(error)[:300]
+            self._set_state('failed', str(error)[:300])
             self._log('FAILED: %s' % error)
             self._say('failed')
 
@@ -320,9 +332,9 @@ class Builder(object):
             self._log('deploy exit %d: %s' % (code, output[-2000:]))
             if code or 'DEPLOY OK' not in output:
                 raise BuildError(output.strip().splitlines()[-1] if output.strip() else 'deploy.sh exit %d' % code)
-            self.state, self.detail = 'deployed', 'car runs %s' % request['branch']
+            self._set_state('deployed', 'car runs %s' % request['branch'])
             self._say('deployed')
         except (BuildError, OSError, subprocess.SubprocessError) as error:
-            self.state, self.detail = 'deploy_failed', str(error)[:300]
+            self._set_state('deploy_failed', str(error)[:300])
             self._log('DEPLOY FAILED: %s' % error)
             self._say('deploy_failed')

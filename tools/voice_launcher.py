@@ -81,7 +81,9 @@ class Launcher(object):
         if self.server_state() != 'off':
             return
         log('starting voice server (%s)' % reason)
-        with open(os.path.join(VOICE_DIR, 'server.log'), 'w', encoding='utf-8') as server_log:
+        with open(os.path.join(VOICE_DIR, 'server.log'), 'a', encoding='utf-8') as server_log:  # kept: the conversations so far
+            server_log.write('==== %s voice server start (%s)\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), reason))
+            server_log.flush()
             self.process = subprocess.Popen([PYTHON, '-u', os.path.join(HERE, 'voice_server.py')], cwd=HERE, stdout=server_log,
                                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
 
