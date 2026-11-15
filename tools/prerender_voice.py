@@ -44,6 +44,12 @@ def _ssh(command, **options):
     return subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, command], timeout=SSH_TIMEOUT_S, **options)
 
 
+def local_recordings():
+    '''{language: [file names]} of the recordings on the PC.'''
+    return {language: sorted(name for name in os.listdir(os.path.join(LOCAL_CACHE, language)) if name.endswith('.wav'))
+            for language in ('de', 'en') if os.path.isdir(os.path.join(LOCAL_CACHE, language))}
+
+
 def copy_missing_to_car(log):
     '''Copies the recordings the car does not have (by file name). Returns how many, or None when the car is not reachable.'''
     listing = _ssh('mkdir -p {0}/de {0}/en && cd {0} && ls de en'.format(CAR_CACHE), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -57,8 +63,7 @@ def copy_missing_to_car(log):
             folder = line[:-1]
         elif line.strip():
             on_car.add('%s/%s' % (folder, line.strip()))
-    missing = ['%s/%s' % (language, name) for language in ('de', 'en') if os.path.isdir(os.path.join(LOCAL_CACHE, language))
-               for name in sorted(os.listdir(os.path.join(LOCAL_CACHE, language))) if name.endswith('.wav') and '%s/%s' % (language, name) not in on_car]
+    missing = ['%s/%s' % (language, name) for language, names in local_recordings().items() for name in names if '%s/%s' % (language, name) not in on_car]
     if missing:
         untar = subprocess.Popen(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'tar xf - -C ' + CAR_CACHE], stdin=subprocess.PIPE)
         with tarfile.open(fileobj=untar.stdin, mode='w|') as archive:

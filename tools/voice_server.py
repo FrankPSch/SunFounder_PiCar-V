@@ -13,6 +13,7 @@ Feature requests by voice (propose -> "go" builds -> "deploy" installs): tools/f
 import http.server
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -24,6 +25,8 @@ import claude_chat
 import feature_builder
 import pc_settings
 import prerender_voice
+import project_docs
+import release
 import speech_to_text
 import text_to_speech
 
@@ -32,6 +35,8 @@ TUNNEL_RETRY_S = 5
 SHUTDOWN_DELAY_S = 0.5      # the reply goes out first
 GREETINGS = {'de': 'Hallo.', 'en': 'Hello.'}  # the car plays it after "hey claude"
 BUSY_STATES = ('building', 'deploying')
+ROLLBACK_WORDS = re.compile(r'zur(ü|ue)ck|vorherige|rollback|previous version|go back', re.IGNORECASE)
+DEPLOY_NEWS_POLL_S = 120
 assert set(GREETINGS) == set(protocol.LANGUAGES)
 
 
@@ -51,6 +56,40 @@ def announce(language, sentence):
 
 
 builder = feature_builder.Builder(announce)
+
+
+def start_rollback(owner_words):
+    '''Rollback by voice: only when the owner's own words ask for it; the car announces the result.'''
+    if not ROLLBACK_WORDS.search(owner_words):
+        return 'Not started: the owner has not asked to go back to the previous version in this sentence.'
+    if builder.state in BUSY_STATES:
+        return 'Not started: a feature build or deploy is running.'
+
+    def run():
+        try:
+            tag, commit = release.rollback(log)
+            announce('de', 'Die vorherige Version %s ist wieder auf dem Auto.' % commit[:7])
+        except (release.ReleaseError, release.integration_lock.Busy, OSError) as error:
+            log('rollback failed: %s' % error)
+            announce('de', 'Zurück zur letzten Version ging nicht: %s' % error)
+    threading.Thread(target=run, name='rollback', daemon=True).start()
+    return 'Rollback started: it takes a few minutes, the car says when it is done. The newer version stays on master for the next deploy.'
+
+
+def announce_chat_deploys():
+    '''A new version deployed by the chat is announced on the car (the voice builds announce themselves).'''
+    seen = None
+    while True:
+        try:
+            tags = release.deploy_tags_on_origin()
+            if seen is not None:
+                for name, subject in tags:
+                    if name not in seen and name.endswith('-chat'):
+                        announce('de', 'Neue Version vom Chat ist auf dem Auto: %s' % subject[:100])
+            seen = {name for name, _ in tags}
+        except (release.ReleaseError, OSError) as error:
+            log('deploy announcements: %s' % error)
+        time.sleep(DEPLOY_NEWS_POLL_S)
 
 
 class Turn(object):
@@ -114,9 +153,15 @@ class Turn(object):
             return builder.start(arguments['option'], transcript)
         if name == 'car_facts':
             return car_facts.summary()
+        if name == 'project_status':
+            return project_docs.status()
+        if name == 'read_doc':
+            return project_docs.read(arguments['name'], arguments['search'])
+        if name == 'rollback_version':
+            return start_rollback(transcript)
         if name == 'hand_to_chat':
             return builder.hand_to_chat(arguments['title'], arguments['understanding'], arguments['reason'], self.language)
-        return builder.deploy(transcript)
+        return builder.deploy(transcript, arguments['phrase_changes_confirmed'])
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -213,7 +258,8 @@ def main():
     for language in protocol.LANGUAGES:
         speech_to_text.transcribe(text_to_speech.synthesize('Hallo.', language))
     threading.Thread(target=car_tunnel.keep_open, args=(pc_settings.CAR, protocol.VOICE_PORT, TUNNEL_RETRY_S, log), name='tunnel', daemon=True).start()
-    threading.Thread(target=lambda: (car_facts.measure(log), prerender_voice.update(log)), name='car-facts', daemon=True).start()  # what the car has, its sentences
+    threading.Thread(target=lambda: (car_facts.measure(log), prerender_voice.update(log), project_docs.build(log)), name='car-facts', daemon=True).start()
+    threading.Thread(target=announce_chat_deploys, name='deploy-news', daemon=True).start()
     print('ready: model %s, whisper %s' % (claude_chat.MODEL, speech_to_text.WHISPER_SIZE), flush=True)
     http.server.ThreadingHTTPServer(('127.0.0.1', protocol.VOICE_PORT), Handler).serve_forever()
 

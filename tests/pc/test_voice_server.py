@@ -16,6 +16,7 @@ import claude_chat  # noqa: E402
 import pc_settings  # noqa: E402
 import text_to_speech  # noqa: E402
 import voice_launcher  # noqa: E402
+from remote_control import requirements  # noqa: E402
 import voice_server  # noqa: E402
 
 protocol = pc_settings.voice_protocol
@@ -43,6 +44,7 @@ class EndpointTest(unittest.TestCase):
         connection.request('GET', '/health')
         self.assertEqual(json.loads(connection.getresponse().read())['model'], 'echo')
 
+    @requirements.shows(('C.conversation.greeting', 'de'))
     def test_greeting_at_the_rate_the_car_asks(self):
         for asked, expected in ((None, 16000), ('48000', 48000), ('12345', 16000)):
             with self.subTest(asked=asked):
@@ -50,6 +52,10 @@ class EndpointTest(unittest.TestCase):
                 self.assertEqual(int(response.getheader(protocol.AUDIO_RATE)), expected)
                 self.assertEqual(texts, [{'sentence': 'Hallo.'}])
                 self.assertTrue(0.5 < seconds(audio[0], expected) < 2.5)
+
+    @requirements.shows(('C.conversation.greeting', 'en'))
+    def test_english_greeting(self):
+        self.assertEqual(request('GET', '/hello?language=en')[1], [{'sentence': 'Hello.'}])
 
     def test_unknown_language_greets_in_german(self):
         self.assertEqual(request('GET', '/hello?language=xx')[1], [{'sentence': 'Hallo.'}])
@@ -59,6 +65,7 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(request('GET', '/news')[1], [{'sentence': 'Das Feature Hupen ist gebaut.'}])
         self.assertEqual(request('GET', '/news')[1], [])
 
+    @requirements.shows(('C.conversation.answer', 'de'), ('C.conversation.answer', 'en'))
     def test_utterance_in_the_cars_language(self):
         german = text_to_speech.synthesize('Wie geht es dir?', 'de')
         english = text_to_speech.synthesize('How are you today?', 'en')
@@ -91,14 +98,17 @@ class ToolTest(unittest.TestCase):
         car = {'status': '{}', 'features': [['qr_reader', False, 'Read QR codes']], 'commands': [['photo', 'Photos: photo']], 'languages': ('de',)}
         self.turn = voice_server.Turn(self.handler, car)
 
+    @requirements.shows(('C.tool.run_command', 'allowed'))
     def test_run_command_sends_it_to_the_car(self):
         self.assertEqual(self.turn._run_tool('run_command', {'name': 'photo'}, ''), 'Ran photo.')
         self.assertEqual(self.handler.texts, [{'run_command': 'photo'}])
 
+    @requirements.shows(('C.tool.run_command', 'driving refused'))
     def test_run_command_refuses_what_the_car_did_not_offer(self):
         self.assertIn('Unknown command', self.turn._run_tool('run_command', {'name': 'forward'}, ''))
         self.assertEqual(self.handler.texts, [])
 
+    @requirements.shows(('C.tool.set_feature', 'known'), ('C.tool.set_feature', 'unknown refused'))
     def test_set_feature(self):
         self.assertEqual(self.turn._run_tool('set_feature', {'name': 'qr_reader', 'on': True}, ''), 'Switched qr_reader on.')
         self.assertIn('Unknown feature', self.turn._run_tool('set_feature', {'name': 'flying', 'on': True}, ''))
@@ -147,6 +157,7 @@ class LauncherTest(unittest.TestCase):
     def test_old_server_without_shutdown(self):
         self.assertEqual(self.stop_with(404), 502)
 
+    @requirements.shows(('S.voice_server.start', 'clean PATH'))
     def test_voice_server_starts_as_the_launcher_starts_it(self):
         '''Started from the Windows Startup folder, the server's PATH lacks the DLL folders (ssl failed 2026-11-15).'''
         clean_path = os.pathsep.join(folder for folder in os.environ['PATH'].split(os.pathsep) if folder not in pc_settings.DLL_DIRS)
@@ -154,6 +165,7 @@ class LauncherTest(unittest.TestCase):
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=180)
         self.assertEqual(result.returncode, 0, result.stdout[-2000:])
 
+    @requirements.shows(('S.voice_server.car_off', 'car off'))
     def test_car_gone_stops_the_server_and_clears_the_voice_stop(self):
         launcher = voice_launcher.Launcher()
         launcher.stopped_by_voice, stops = True, []

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(REPO, 'remote_control'))
 import django  # noqa: E402
 django.setup()
 
-from remote_control import features, speaker, spoken_texts, tracker, voice_cache  # noqa: E402
+from remote_control import features, requirements, speaker, spoken_texts, tracker, voice_cache  # noqa: E402
 
 CAR_CODE = glob.glob(os.path.join(REPO, 'remote_control', 'remote_control', '*.py'))
 SAY_LITERAL = re.compile(r'''say(?:_later)?(?:=|\()\s*(['"])(.+?)\1''')
@@ -33,6 +33,7 @@ def recording(cache_dir, language, text, seconds=0.5):
 
 
 class CatalogTest(unittest.TestCase):
+    @requirements.shows(('S.speech.natural', 'all sentences recorded'))
     def test_every_literal_the_car_code_says_is_recorded(self):
         said = {voice_cache.key(text) for _, text in spoken_texts.sentences()}
         missing = []
@@ -78,12 +79,14 @@ class SayTest(unittest.TestCase):
         self.assertEqual(len(self.played), 1)
         self.assertAlmostEqual(self.played[0], 0.5 * speaker.PLAYBACK_RATE * 2, delta=16)  # rate conversion rounds
 
+    @requirements.shows(('S.speech.natural', 'stitched numbers'))
     def test_sentences_and_words_are_stitched(self):
         for text in ('Lernen beendet.', '31', 'von', '33', 'verstanden.'):
             recording(self.cache, 'de', text)
         clips = speaker.natural_clips('Lernen beendet. 31 von 33 verstanden.', 'de')
         self.assertEqual([os.path.basename(clip) for clip in clips], [voice_cache.file_name(text) for text in ('Lernen beendet', '31', 'von', '33', 'verstanden')])
 
+    @requirements.shows(('S.speech.natural', 'espeak fallback'))
     def test_anything_missing_means_espeak_for_the_whole_text(self):
         recording(self.cache, 'de', 'Lernen beendet.')
         speaker.say('Lernen beendet. 31 von 33 verstanden.', 'de')

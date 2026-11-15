@@ -16,6 +16,7 @@ import claude_chat  # noqa: E402
 import feature_builder  # noqa: E402
 import integration_lock  # noqa: E402
 import wish_list  # noqa: E402
+from remote_control import requirements  # noqa: E402
 
 FACTS_OUTPUT = '''==== arch
 armv7l
@@ -53,6 +54,7 @@ class TempFolderTest(unittest.TestCase):
 
 
 class LockTest(TempFolderTest):
+    @requirements.shows(('S.integration.lock', 'chat push'))
     def test_one_writer_at_a_time(self):
         with integration_lock.held('chat'):
             self.assertEqual(integration_lock.holder()['owner'], 'chat')
@@ -80,6 +82,7 @@ class LockTest(TempFolderTest):
 
 
 class CarFactsTest(TempFolderTest):
+    @requirements.shows(('C.project.read', 'car facts'))
     def test_measured_and_summarised(self):
         with mock.patch.object(car_facts.subprocess, 'run', lambda *args, **kwargs: mock.Mock(returncode=0, stdout=FACTS_OUTPUT)):
             facts = car_facts.measure(lambda text: None)
@@ -106,6 +109,7 @@ class BuilderTest(TempFolderTest):
         self.builder.propose('Bessere Stimme', 'Piper auf dem Pi', ['Piper installieren'], 'de')
         self.builder.request['option'] = 'Piper installieren'
 
+    @requirements.shows(('C.wish.for_chat', 'by the builder'))
     def test_not_feasible_goes_to_the_chat(self):
         with mock.patch.object(self.builder, '_run_builder', lambda prompt, session: ('s1', 'NOT FEASIBLE: Piper ist auf dem Auto nicht installiert.')):
             self.builder._build()
@@ -121,12 +125,14 @@ class BuilderTest(TempFolderTest):
         self.assertIn('CAR FACTS: armv7l, mbrola NO', prompts[0])
         self.assertIn("NOT FEASIBLE: <one sentence why, in the owner's language (de)>", prompts[0])
 
+    @requirements.shows(('S.integration.lock', 'build'))
     def test_a_build_waits_for_the_chat_and_says_so(self):
         with integration_lock.held('chat'), mock.patch.object(feature_builder, 'LOCK_WAIT_S', 0.05):
             self.builder._build()
         self.assertEqual(self.builder.state, 'failed')
         self.assertEqual(self.said[0], 'Der Chat ändert gerade den Code. Ich warte, dann geht es mit Bessere Stimme weiter.')
 
+    @requirements.shows(('S.integration.rebase', 'conflict'), ('C.wish.for_chat', 'deploy conflict'))
     def test_a_deploy_conflicting_with_the_chat_goes_to_the_chat(self):
         self.builder.state, self.builder.request['worktree'], self.builder.request['branch'] = 'built', self.folder, 'voice/x'
         self.builder.request['log'] = os.path.join(self.folder, 'build.log')
@@ -146,6 +152,7 @@ class BuilderTest(TempFolderTest):
         self.assertIn(['rebase', '--abort'], commands)
         self.assertNotIn(['push', '-q'], commands)
 
+    @requirements.shows(('C.wish.for_chat', 'by Claude voice'))
     def test_hand_to_chat_by_claude_voice(self):
         answer = self.builder.hand_to_chat('Piper auf dem Pi', 'Natürliche Stimme', 'braucht ein Paket', 'de')
         self.assertIn('Written down for the chat', answer)

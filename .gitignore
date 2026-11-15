@@ -5,3 +5,4 @@
 *.ai
 *.indd
 docs/build/*
+project/generated/

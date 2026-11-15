@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import api, audio, commands, conversation as conversation_module, events, features, learning, media, rooms, speaker, vocabulary  # noqa: E402
+from remote_control import api, audio, commands, conversation as conversation_module, events, features, learning, media, requirements, rooms, speaker, vocabulary  # noqa: E402
 from remote_control.car import car, STEER_MAX, STEER_MIN  # noqa: E402
 from remote_control.tracker import tracker  # noqa: E402
 
@@ -190,6 +190,7 @@ class SpokenPhraseTest(CommandTest):
                     self.setUp_phrase(phrase)
                     hear(language, phrase)
                     self.check(effect, '%s "%s"' % (language, phrase))
+                    requirements.covered(*requirements.voice_requirement(language, phrase))
 
     def setUp_phrase(self, phrase):
         car.ready()
@@ -215,6 +216,29 @@ class SpokenPhraseTest(CommandTest):
             hear('de', 'kamera links')
         self.assertEqual(said, ['camera center', 'camera left'])
 
+    def test_every_dashboard_switch(self):
+        '''What a dashboard switch sends (POST feature): each one turns on and off. Its listeners are left out here,
+        the features themselves have their own tests.'''
+        with mock.patch.object(features, '_listeners', []):
+            for name in features.FEATURES:
+                was_on = features.enabled(name)
+                for is_on in (True, False):
+                    with self.subTest(switch=name, on=is_on):
+                        self.assertEqual(api.command(FakeRequest({'cmd': 'feature', 'name': name, 'on': is_on})).status_code, 200)
+                        self.assertEqual(features.enabled(name), is_on)
+                        requirements.covered('K.switch.' + name, 'on' if is_on else 'off')
+                features.set_enabled(name, was_on)
+
+    def test_every_dashboard_setting(self):
+        values = {int: 7, str: 'de'}
+        for name, kind in events.EDITABLE_SETTINGS.items():
+            with self.subTest(setting=name):
+                before = events.settings().get(name)
+                self.assertEqual(api.command(FakeRequest({'cmd': 'setting', 'name': name, 'value': values[kind]})).status_code, 200)
+                self.assertEqual(events.settings()[name], values[kind])
+                requirements.covered('K.setting.' + name, 'set')
+                events.update_setting(name, before if before is not None else ('' if kind is str else values[kind]))  # '' = not set
+
     def test_noise_word_before_a_phrase(self):
         '''Room noise heard as a grammar word in front: the phrase still counts, unless it drives (2026-11-15).'''
         hear('de', 'oben claude starten')
@@ -224,6 +248,8 @@ class SpokenPhraseTest(CommandTest):
         for text in ('oben vorwärts', 'hey claude los', 'foto zurück'):
             hear('de', text)
         self.assertEqual(car.state()['drive_direction'], 0)
+        requirements.covered('S.recognition.noise_word', 'command')
+        requirements.covered('S.recognition.noise_word', 'driving')
 
     def test_voice_commands_switch_off(self):
         features.set_enabled('voice_commands', False)
@@ -334,6 +360,7 @@ class ApiCommandTest(CommandTest):
                 response = api.command(FakeRequest(body))
                 self.assertEqual(response.status_code, 200, body)
                 self.check(effect, str(body))
+                requirements.covered('K.command.' + body['cmd'], 'run')
 
     def test_unknown_command_is_rejected(self):
         self.assertEqual(api.command(FakeRequest({'cmd': 'fly'})).status_code, 400)

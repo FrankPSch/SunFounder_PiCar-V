@@ -33,10 +33,10 @@ actions `commands.py`, switches `features.py`, settings `events.EDITABLE_SETTING
    builds and tests it in the simulation → the car says "gebaut" → Claude voice reads the deploy summary → Frank says **"deploy"**.
    A wish that needs software the car lacks, hardware, or PC-side changes becomes **`for_chat`**: nothing is built, the chat takes it over.
 2. **One writer on master at a time:** the voice builder and the chat take `tools/integration_lock.py` (a file on the PC). The chat never
-   pushes by hand: `python tools/push.py "reason"` = lock → fetch → rebase → all tests → push master + release → version tag → car update
+   pushes by hand: `python tools/release.py push "reason"` = lock → fetch → rebase → all tests → push master + release → version tag → car update
    → post-deploy check on the real car. A voice deploy rebases itself onto a newer master and tests again.
 3. **Every deploy gets a tag** `deploy/<date>-<time>-<voice|chat>`; "zurück zur letzten Version" (Claude voice) puts the previous tag on
-   the car (`tools/release.py rollback`).
+   the car (`tools/release.py rollback`; release only, master keeps the newer work for the next deploy).
 4. **Review:** voice builds are "not reviewed" in `CHANGES.md` until the chat has checked them on the real car (`tools/release.py review <commit>`).
 5. **Tests:** `python tools/run_tests.py` (voice environment) = car tests, PC tests, both sim suites, then the requirements report.
    A new command, switch or setting without a requirement or test makes it fail.
@@ -55,6 +55,7 @@ actions `commands.py`, switches `features.py`, settings `events.EDITABLE_SETTING
 PC: checkout `D:\a_ClaudeCowork\PiCar\code\SunFounder_PiCar-V`, voice folder `D:\a_ClaudeCowork\PiCar\voice` (environments, Piper, Whisper,
 voice recordings, wish data, logs, lock). Car: `pi@192.168.178.131` (key `~/.ssh/picar_ed25519`), code `/home/pi/SunFounder_PiCar-V`,
 data `/home/pi/picar-data`. The PC voice launcher starts the voice server when the car is on.
+Voice builds run `claude -p` with the voice server's environment, so `ANTHROPIC_API_KEY` bills them to the API account (open decision: project/WORKPLAN.md).
 
 ## For Claude on the car
 

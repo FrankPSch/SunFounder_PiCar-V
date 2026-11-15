@@ -66,11 +66,18 @@ TOOLS = [
           ['title', 'understanding', 'options']),
     _tool('start_build', 'Build the proposed feature. Only after the owner said "go".',
           {'option': {'type': 'string', 'description': 'the option the owner chose, in full'}}, ['option']),
-    _tool('deploy_feature', 'Install the built feature on the car. Only after the owner said "deploy".', {}, []),
+    _tool('deploy_feature', 'Install the built feature on the car. Only after the owner said "deploy". If the status line lists phrases that '
+          'change meaning, read them to the owner first and set phrase_changes_confirmed only after a clear yes.',
+          {'phrase_changes_confirmed': {'type': 'boolean'}}, ['phrase_changes_confirmed']),
     _tool('car_facts', 'What is really installed on the car (measured): check it before propose_feature.', {}, []),
     _tool('hand_to_chat', 'Write down a wish the voice build cannot do (software the car lacks, hardware, PC changes) for Claude in the chat.',
           {'title': {'type': 'string', 'description': 'two to five words'}, 'understanding': {'type': 'string'},
            'reason': {'type': 'string', 'description': 'one sentence why the chat must do it'}}, ['title', 'understanding', 'reason']),
+    _tool('project_status', 'The project now: version on the car, open wishes, voice builds not reviewed, untested requirements.', {}, []),
+    _tool('read_doc', 'Read a project document, whole or only the lines containing search (empty search = all): '
+          'WISHES, REQUIREMENTS, CHANGES, CAR_FACTS, VOICE_COMMANDS, WORKPLAN, SETUP_LOG.',
+          {'name': {'type': 'string'}, 'search': {'type': 'string'}}, ['name', 'search']),
+    _tool('rollback_version', 'Put the previous version back on the car. Only after the owner asked for it and confirmed once.', {}, []),
 ]
 TOOL_TYPES = {tool['name']: {key: value['type'] for key, value in tool['input_schema']['properties'].items()} for tool in TOOLS}
 JSON_TYPES = {'string': str, 'boolean': bool, 'array': list}

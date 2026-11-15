@@ -1,6 +1,6 @@
 '''Every feature wish spoken to Claude on the car, kept for good, so a chat on the PC can follow them:
-  <PiCar folder>/wishes.jsonl     one line per step of a wish (append only)
-  <PiCar folder>/PiCar_Wishes.md  every wish in its latest state, newest first, made from it after each step
+  <voice dir>/wishes.jsonl            one line per step of a wish (append only, the data)
+  project/generated/WISHES.md          every wish in its latest state, newest first, made from it after each step
 Steps (feature_builder.Builder): proposed, building, built, failed, deploying, deployed, deploy_failed, and dropped
 (a new wish replaced one still waiting for "go").'''
 import json
@@ -10,7 +10,7 @@ import time
 import uuid
 
 WISHES_FILE = 'wishes.jsonl'
-MARKDOWN_FILE = 'PiCar_Wishes.md'
+MARKDOWN_FILE = 'WISHES.md'       # next to the data unless a path is given
 STEP_FIELDS = ('title', 'understanding', 'options', 'language', 'option', 'branch', 'feature', 'detail')
 
 
@@ -20,8 +20,9 @@ def new_id():
 
 
 class WishList(object):
-    def __init__(self, folder):
+    def __init__(self, folder, markdown_path=None):
         self.folder = folder
+        self.markdown_path = markdown_path or os.path.join(folder, MARKDOWN_FILE)
         self._lock = threading.Lock()
 
     def record(self, wish_id, state, **fields):
@@ -33,7 +34,8 @@ class WishList(object):
             os.makedirs(self.folder, exist_ok=True)
             with open(os.path.join(self.folder, WISHES_FILE), 'a', encoding='utf-8') as wishes:
                 wishes.write(json.dumps(line, ensure_ascii=False) + '\n')
-            with open(os.path.join(self.folder, MARKDOWN_FILE), 'w', encoding='utf-8') as markdown:
+            os.makedirs(os.path.dirname(self.markdown_path), exist_ok=True)
+            with open(self.markdown_path, 'w', encoding='utf-8') as markdown:
                 markdown.write(self.markdown())
 
     def wishes(self):

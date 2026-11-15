@@ -4,7 +4,7 @@ import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VOICE_DIR = os.environ.get('PICAR_VOICE_DIR', r'D:\a_ClaudeCowork\PiCar\voice')  # Whisper, Piper, environments: not in git
-PICAR_DIR = os.environ.get('PICAR_DIR', os.path.dirname(VOICE_DIR))  # project notes, wish list
+WISHES_DIR = os.environ.get('PICAR_WISHES_DIR', VOICE_DIR)  # wishes.jsonl: data, not in git (view: project/generated/WISHES.md)
 VOICE_PYTHON = os.path.join(VOICE_DIR, 'env', 'Scripts', 'python.exe')
 CAR_HOST = os.environ.get('PICAR_HOST', '192.168.178.131')
 CAR = 'pi@' + CAR_HOST

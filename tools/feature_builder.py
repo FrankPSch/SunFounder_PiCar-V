@@ -27,6 +27,7 @@ import urllib.request
 import car_facts
 import integration_lock
 import pc_settings
+import release
 import wish_list
 
 WORK_DIR = os.environ.get('PICAR_WORK_DIR', pc_settings.VOICE_DIR)
@@ -142,6 +143,33 @@ def _stop_phrases_at(source):
     raise BuildError("Spoken('stop', ...) not found in " + VOCABULARY_FILE)
 
 
+def phrase_meanings_at(source):
+    '''{(language, phrase): command name} of every Spoken(...) in a vocabulary.py source.'''
+    meanings = {}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'Spoken' and len(node.args) >= 6:
+            name = ast.literal_eval(node.args[0])
+            for language, argument in zip(('de', 'en'), node.args[4:6]):
+                meanings.update(((language, phrase), name) for phrase in ast.literal_eval(argument))
+    return meanings
+
+
+def changed_meanings(before, after):
+    '''Spoken changes, for the deploy summary: ["de 'danke claude': claude_end -> claude_stop", "de 'hupe': new -> horn", ...].'''
+    return ['%s %r: %s -> %s' % (language, phrase, before.get((language, phrase), 'new'), after.get((language, phrase), 'removed'))
+            for language, phrase in sorted(set(before) | set(after)) if before.get((language, phrase)) != after.get((language, phrase))]
+
+
+def deploy_summary(worktree, base):
+    '''(summary text for Claude voice, phrases whose meaning changes) of a build against its base.'''
+    files = _git('diff', '--name-only', base, 'HEAD', cwd=worktree).split()
+    meanings = changed_meanings(phrase_meanings_at(_git('show', '%s:%s' % (base, VOCABULARY_FILE), cwd=worktree)),
+                                phrase_meanings_at(_git('show', 'HEAD:' + VOCABULARY_FILE, cwd=worktree)))
+    redefined = [change for change in meanings if ': new ->' not in change]
+    text = 'files: %s; spoken phrases: %s' % (', '.join(files) or 'none', '; '.join(meanings) or 'unchanged')
+    return text, redefined
+
+
 def check_build(worktree, base):
     '''Problems as text lines (empty = accepted) and the name of the new switch.'''
     problems = []
@@ -221,7 +249,7 @@ def sim_tests_pass(worktree, log):
 class Builder(object):
     def __init__(self, announce, wishes=None):
         self._announce = announce  # announce(language, text): spoken by the car at its next poll
-        self._wishes = wishes or wish_list.WishList(pc_settings.PICAR_DIR)
+        self._wishes = wishes or wish_list.WishList(pc_settings.WISHES_DIR, os.path.join(pc_settings.REPO, 'project', 'generated', 'WISHES.md'))
         self._lock = threading.Lock()
         self.state = 'idle'
         self.request = None        # dict: id, title, understanding, options, language, option, feature, branch, worktree, log
@@ -240,7 +268,9 @@ class Builder(object):
         if self.state == 'proposed':
             text += ' (options: %s; waiting for "go")' % '; '.join(self.request['options'])
         if self.state == 'built':
-            text += ' (switch %s, waiting for "deploy")' % self.request['feature']
+            text += ' (switch %s, waiting for "deploy"; read this deploy summary to the owner first: %s%s)' % (
+                self.request['feature'], self.request.get('summary', ''),
+                '; THESE PHRASES CHANGE MEANING, ask the owner to confirm them: ' + '; '.join(self.request['redefined']) if self.request.get('redefined') else '')
         return text + (' - ' + self.detail if self.detail else '')
 
     def propose(self, title, understanding, options, language):
@@ -275,12 +305,14 @@ class Builder(object):
         threading.Thread(target=self._build, daemon=True).start()
         return 'Build started. Tell the owner it takes a few minutes and that the car will say when it is ready.'
 
-    def deploy(self, owner_words):
+    def deploy(self, owner_words, phrase_changes_confirmed=False):
         with self._lock:
             if self.state != 'built':
                 return 'Nothing to deploy (state: %s).' % self.state
             if not DEPLOY.search(owner_words):
                 return 'Not deployed: the owner has not said "deploy".'
+            if self.request.get('redefined') and not phrase_changes_confirmed:
+                return 'Not deployed: these phrases change meaning: %s. Read them to the owner and deploy only after a clear yes.' % '; '.join(self.request['redefined'])
             self._set_state('deploying', 'the car restarts in about a minute')
         threading.Thread(target=self._deploy, daemon=True).start()
         return 'Deploy started. Tell the owner the car restarts and will say when the update is installed.'
@@ -346,6 +378,7 @@ class Builder(object):
             _git('add', '-A', cwd=request['worktree'])
             _git('commit', '-q', '-m', 'Voice feature %s: %s\n\n%s\nOption: %s\nNew switch %s, off by default. Built by Claude Code from a spoken request.\n\n%s'
                  % (feature, request['title'], request['understanding'], request['option'], feature, CO_AUTHOR), cwd=request['worktree'])
+            request['summary'], request['redefined'] = deploy_summary(request['worktree'], base)
             self._set_state('built', 'commit %s on %s' % (_git('rev-parse', '--short', 'HEAD', cwd=request['worktree']), request['branch']), feature=feature)
             self._log(self.detail)
             self._say('built')
@@ -397,7 +430,11 @@ class Builder(object):
             self._log('deploy exit %d: %s' % (code, output[-2000:]))
             if code or 'DEPLOY OK' not in output:
                 raise BuildError(output.strip().splitlines()[-1] if output.strip() else 'deploy.sh exit %d' % code)
-            self._set_state('deployed', 'car runs %s' % request['branch'])
+            commit = _git('rev-parse', 'HEAD', cwd=request['worktree'])
+            tag = release.tag('voice', cwd=request['worktree'])
+            passed, report = release.after_deploy('voice', commit, self._log)
+            self._set_state('deployed', 'car runs %s (%s); check on the car: %s' % (request['branch'], tag, 'ok' if passed else '; '.join(
+                line for line in report if not line.startswith('ok'))[:200]))
             self._say('deployed')
         except NotFeasible as reason:
             self._set_state('for_chat', str(reason)[:300])

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 import pc_settings  # noqa: E402
 import text_to_speech  # noqa: E402
 import voice_check  # noqa: E402
-from remote_control import phrase_check, vocabulary  # noqa: E402
+from remote_control import phrase_check, requirements, vocabulary  # noqa: E402
 
 MODELS = os.path.join(pc_settings.VOICE_DIR, 'vosk_models')
 OWNER_RECORDINGS = os.path.join(pc_settings.VOICE_DIR, 'recordings')
@@ -36,6 +36,7 @@ def speech(phrase, language):
 
 
 class RecognitionTest(unittest.TestCase):
+    @requirements.shows(('S.recognition.piper', 'de'), ('S.recognition.piper', 'en'))
     def test_every_phrase_is_understood(self):
         '''Fails for a phrase the small models do not know, or two spellings of one sound (confidence split).
         Piper varies every synthesis a little, so a phrase gets a second one: failing twice in a row is real.'''

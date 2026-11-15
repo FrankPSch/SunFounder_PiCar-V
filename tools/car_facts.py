@@ -31,13 +31,15 @@ KEY_SOFTWARE = ('espeak-ng', 'mbrola', 'opencv-data', 'python3-opencv', 'ffmpeg'
 
 def measure(log=print):
     '''Measures and saves the facts. Returns them, or None when the car is not reachable (the last ones stay).'''
-    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'sh -s'], input=REMOTE_SCRIPT, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, universal_newlines=True, timeout=SSH_TIMEOUT_S)
-    if result.returncode or '==== commit' not in result.stdout:
+    # bytes, not text: Windows text mode would send CRLF line ends, which the car's shell cannot read
+    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'sh -s'], input=REMOTE_SCRIPT.encode('utf-8'), stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, timeout=SSH_TIMEOUT_S)
+    output = result.stdout.decode('utf-8', 'replace') if isinstance(result.stdout, bytes) else result.stdout
+    if result.returncode or '==== commit' not in output:
         log('car facts: car not reachable, keeping the last measurement')
         return None
     facts, section = {'measured': time.strftime('%Y-%m-%d %H:%M:%S')}, None
-    for line in result.stdout.splitlines():
+    for line in output.splitlines():
         if line.startswith('==== '):
             section = line[5:]
             facts[section] = []

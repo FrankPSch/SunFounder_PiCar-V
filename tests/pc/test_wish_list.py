@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'tools'))
 import feature_builder  # noqa: E402
 import wish_list  # noqa: E402
+from remote_control import requirements  # noqa: E402
 
 OPTIONS = ['Nach Stille', 'Mit Schlusswort', 'Beides']
 STEP_TIMEOUT_S = 5
@@ -44,6 +45,7 @@ class WishListTest(unittest.TestCase):
                 self.builder.deploy('Deploy.')
                 self.wait_for('deployed')
 
+    @requirements.shows(('C.wish.flow', 'proposed'), ('C.wish.flow', 'built'), ('C.wish.flow', 'deployed'), ('C.wish.list', 'proposed'), ('C.wish.list', 'dropped'), ('C.wish.list', 'deployed'))
     def test_a_wish_from_proposal_to_the_car(self):
         self.builder.propose('Hupen', 'Hupt beim Losfahren', ['Kurz', 'Lang'], 'de')
         self.builder.propose('Sprachbefehle im Dialog pausieren', 'Im Gespräch keine Befehle', OPTIONS, 'de')
@@ -61,6 +63,7 @@ class WishListTest(unittest.TestCase):
                          'Detail: replaced by "Sprachbefehle im Dialog pausieren" before "go"'):
             self.assertIn(expected, text)
 
+    @requirements.shows(('C.wish.list', 'failed'))
     def test_a_failed_build_keeps_the_reason(self):
         self.builder.propose('Hupen', 'Hupt beim Losfahren', ['Kurz'], 'de')
         self.build_and_deploy(('failed', 'still rejected after 2 fix rounds: simulation tests failed:', {}))
