@@ -1,11 +1,9 @@
 '''Voice values shared by the word recogniser and the conversation: languages and the level at which sound counts as speech.'''
 from . import events, voice_protocol
 from .car import car
+from .speech_level import SPEECH_DBFS
 
 DEFAULT_VOICE_LANGUAGES = 'de'
-# A 0.1 s chunk this loud counts as speech. Measured 2026-11-14, Jabra mic gain 7/7 (alsa.MIC_MIXERS): room -59..-60,
-# owner's voice -22..-36 parked; motor -24..-29 while driving, voice on top -18..-21.
-SPEECH_DBFS = {'parked': -48, 'driving': -22}
 
 
 def speech_dbfs():

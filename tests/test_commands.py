@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import api, audio, commands, conversation as conversation_module, events, features, media, rooms, speaker  # noqa: E402
+from remote_control import api, audio, commands, conversation as conversation_module, events, features, media, rooms, speaker, vocabulary  # noqa: E402
 from remote_control.car import car, STEER_MAX, STEER_MIN  # noqa: E402
 from remote_control.tracker import tracker  # noqa: E402
 
@@ -39,7 +39,7 @@ SPOKEN = {
         'aufnahme': ('calls', ['start_recording']), 'aufnahme stopp': ('calls', ['stop_recording']),
         'folge ball': ('feature_on', 'ball_tracking'), 'folge gesicht': ('feature_on', 'face_tracking'),
         'schatzsuche': ('feature_on', 'treasure_hunt'),
-        'stopp': ('drive_direction', 0), 'stop': ('drive_direction', 0), 'halt': ('drive_direction', 0), 'anhalten': ('drive_direction', 0),
+        'stopp': ('drive_direction', 0), 'halt': ('drive_direction', 0), 'anhalten': ('drive_direction', 0),
         'claude starten': ('calls', ['server start']), 'claude beenden': ('calls', ['server stop']), 'claude stoppen': ('calls', ['server stop']),
         'hey claude': ('calls', ['conversation start']), 'hallo claude': ('calls', ['conversation start']),
         'hilfe': ('calls', ['help']),
@@ -50,7 +50,7 @@ SPOKEN = {
         'left': ('steer_angle', 70), 'right': ('steer_angle', 110), 'straight': ('steer_angle', 90),
         'faster': ('speed', 50), 'slower': ('speed', 30),
         'camera left': ('pan_ticks', 20), 'camera right': ('pan_ticks', -20), 'camera up': ('tilt_ticks', 20), 'camera down': ('tilt_ticks', -20),
-        'center': ('cam_centred', True), 'centre': ('cam_centred', True), 'ready': ('ready', True),
+        'center': ('cam_centred', True), 'ready': ('ready', True),
         'photo': ('calls', ['snapshot']), 'picture': ('calls', ['snapshot']),
         'record': ('calls', ['start_recording']), 'stop recording': ('calls', ['stop_recording']),
         'follow ball': ('feature_on', 'ball_tracking'), 'follow face': ('feature_on', 'face_tracking'),
@@ -64,7 +64,7 @@ SPOKEN = {
 # Phrases that need the car to be driving to show their effect, and the steering ones that start from another angle.
 NEEDS_DRIVING = {'stopp', 'stop', 'halt', 'anhalten'}
 STARTS_TURNED = {'geradeaus', 'straight'}
-STARTS_MOVED = {'mitte', 'center', 'centre', 'startklar', 'ready'}
+STARTS_MOVED = {'mitte', 'center', 'startklar', 'ready'}
 NOT_IN_CONVERSATION = {'go', 'los'}  # they confirm a feature build ("go") in a conversation
 
 # POST /api/cmd -> expected effect
@@ -282,13 +282,13 @@ class ApiCommandTest(CommandTest):
 
 class HelpTest(unittest.TestCase):
     def test_german_help_names_groups_and_commands(self):
-        text = commands.help_text('de')
-        self.assertTrue(text.startswith(commands.HELP_INTRO['de']))
+        text = vocabulary.help_text('de')
+        self.assertTrue(text.startswith(vocabulary.HELP_INTRO['de']))
         for expected in ('Fahren: vorwärts', 'Kamera: kamera links', 'Folgen: folge ball', 'Fotos und Videos: foto', 'System: hey claude', 'claude starten', 'hilfe'):
             self.assertIn(expected, text)
 
     def test_english_help(self):
-        self.assertIn('Driving: forward, back, left', commands.help_text('en'))
+        self.assertIn('Driving: forward, back, left', vocabulary.help_text('en'))
 
 
 class ClaudeCommandTest(CommandTest):
@@ -320,7 +320,7 @@ class TableTest(unittest.TestCase):
     '''The command code and this file's tables list the same commands and phrases.'''
     def test_spoken_phrases_match(self):
         for language, phrases in SPOKEN.items():
-            self.assertEqual(set(commands.phrases(language)), set(phrases), language)
+            self.assertEqual(set(vocabulary.phrases(language)), set(phrases), language)
 
     def test_api_commands_match(self):
         self.assertEqual(set(commands.api_names()), {body['cmd'] for body, _ in API})

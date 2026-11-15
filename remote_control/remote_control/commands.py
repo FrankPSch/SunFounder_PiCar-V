@@ -1,38 +1,23 @@
 '''Every command of the car, in one place.
 
 ACTIONS  what the car can do, with arguments. The web page calls them (POST /api/cmd {"cmd": name, ...}).
-SPOKEN   the spoken commands: phrases in German and English, each pointing to an action with fixed arguments.
-         The word recogniser listens for exactly these phrases, "Hilfe" reads them out by group, and Claude may
-         run the ones that do not move the car.
+         The spoken commands (vocabulary.SPOKEN) point to them; Claude may run the spoken ones that do not move the car.
 
-A new command: one Action (if the car cannot do it yet) and one Spoken line. tests/test_commands.py lists the
-expected behaviour of every phrase and fails until it knows the new one too.
+A new command: one Action here (if the car cannot do it yet), and for a spoken one a Spoken line in vocabulary.py.
+tests/test_commands.py lists the expected behaviour of every phrase and fails until it knows the new one too.
 '''
 import dataclasses
-import enum
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List
 
 from . import events, features, media, rooms, speaker, voice_link
 from .car import car
 from .tracker import tracker
+from .vocabulary import Kind, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, help_text
 
 DRIVE_BURST_S = 1.4         # a spoken "vorwärts" drives this long; the watchdog stops the car after it
 KEEPALIVE_S = 0.2
-STEER_STEP = 20
-SPEED_STEP = 10
-CAM_STEPS = 10
-
-
-class Kind(enum.Enum):
-    COMMAND = 'command'     # switch voice_commands; whole phrase only, never inside a sentence
-    STOP = 'stop'           # always listened for; acts on partial words while driving, also inside a sentence
-    WAKE = 'wake'           # "hey claude": starts a conversation (switch claude_voice)
-    SYSTEM = 'system'       # switch claude_voice; whole phrase only
-
-
-SWITCH = {Kind.COMMAND: 'voice_commands', Kind.WAKE: 'claude_voice', Kind.SYSTEM: 'claude_voice', Kind.STOP: None}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -40,21 +25,6 @@ class Action:
     run: Callable[[dict], object]
     moves: bool = False     # drives the car: Claude may not run it
     web: bool = True        # offered on POST /api/cmd
-
-
-@dataclasses.dataclass(frozen=True)
-class Spoken:
-    name: str
-    group: str
-    action: Optional[str]
-    args: Dict
-    de: Tuple[str, ...]
-    en: Tuple[str, ...]
-    kind: Kind = Kind.COMMAND
-    fast: bool = False      # acts on the partial result, before the phrase ends: steering only (a wrong one just turns the wheels)
-
-    def phrases(self, language):
-        return getattr(self, language)
 
 
 def _drive_burst(direction):
@@ -116,54 +86,11 @@ ACTIONS = {
     'help':         Action(lambda args: speak_help(args['language']), web=False),
 }
 
-GROUP_NAMES = {'drive': {'de': 'Fahren', 'en': 'Driving'}, 'camera': {'de': 'Kamera', 'en': 'Camera'},
-               'follow': {'de': 'Folgen', 'en': 'Following'}, 'media': {'de': 'Fotos und Videos', 'en': 'Photos and videos'},
-               'system': {'de': 'System', 'en': 'System'}}
-
-SPOKEN = (
-    Spoken('forward', 'drive', 'drive_burst', {'direction': 1}, ('vorwärts', 'los'), ('forward', 'forwards', 'go')),
-    Spoken('back', 'drive', 'drive_burst', {'direction': -1}, ('rückwärts', 'zurück'), ('back', 'backward', 'backwards', 'reverse')),
-    Spoken('left', 'drive', 'steer', {'delta': -STEER_STEP}, ('links',), ('left',), fast=True),
-    Spoken('right', 'drive', 'steer', {'delta': STEER_STEP}, ('rechts',), ('right',), fast=True),
-    Spoken('straight', 'drive', 'steer', {'value': 90}, ('geradeaus',), ('straight',), fast=True),
-    Spoken('faster', 'drive', 'speed', {'delta': SPEED_STEP}, ('schneller',), ('faster',)),
-    Spoken('slower', 'drive', 'speed', {'delta': -SPEED_STEP}, ('langsamer',), ('slower',)),
-    Spoken('stop', 'drive', 'stop', {'reason': 'voice stop'}, ('stopp', 'stop', 'halt', 'anhalten'), ('stop', 'halt'), kind=Kind.STOP),
-    Spoken('ready', 'drive', 'ready', {}, ('startklar',), ('ready',)),  # not "bereit": the German model hears it in English "straight"
-    Spoken('camera_left', 'camera', 'cam_move', {'pan': CAM_STEPS}, ('kamera links',), ('camera left',)),
-    Spoken('camera_right', 'camera', 'cam_move', {'pan': -CAM_STEPS}, ('kamera rechts',), ('camera right',)),
-    Spoken('camera_up', 'camera', 'cam_move', {'tilt': CAM_STEPS}, ('kamera hoch', 'kamera oben'), ('camera up',)),
-    Spoken('camera_down', 'camera', 'cam_move', {'tilt': -CAM_STEPS}, ('kamera runter', 'kamera unten'), ('camera down',)),
-    Spoken('center', 'camera', 'cam_center', {}, ('mitte',), ('center', 'centre')),
-    Spoken('follow_ball', 'follow', 'feature', {'name': 'ball_tracking', 'on': True}, ('folge ball',), ('follow ball',)),
-    Spoken('follow_face', 'follow', 'feature', {'name': 'face_tracking', 'on': True}, ('folge gesicht',), ('follow face',)),
-    Spoken('treasure_hunt', 'follow', 'feature', {'name': 'treasure_hunt', 'on': True}, ('schatzsuche',), ('treasure hunt',)),
-    Spoken('photo', 'media', 'photo', {}, ('foto', 'bild'), ('photo', 'picture')),
-    Spoken('record', 'media', 'record', {'on': True}, ('aufnahme',), ('record',)),
-    Spoken('stop_recording', 'media', 'record', {'on': False}, ('aufnahme stopp',), ('stop recording',)),
-    Spoken('hey_claude', 'system', None, {}, ('hey claude', 'hallo claude'), ('hey claude', 'hello claude'), kind=Kind.WAKE),
-    Spoken('claude_start', 'system', 'voice_server', {'action': 'start'}, ('claude starten',), ('start claude',), kind=Kind.SYSTEM),
-    Spoken('claude_stop', 'system', 'voice_server', {'action': 'stop'}, ('claude beenden', 'claude stoppen'), ('stop claude',), kind=Kind.SYSTEM),
-    Spoken('help', 'system', 'help', {}, ('hilfe',), ('help',)),
-)
-# In a conversation these confirm a feature build ("go", tools/feature_builder.py) instead of driving
-NOT_IN_CONVERSATION = ('go', 'los')
-HELP_INTRO = {'de': 'Ich bin dein PiCar. Sag eines dieser Wörter, oder hey Claude für ein Gespräch.',
-              'en': 'I am your PiCar. Say one of these words, or hey Claude for a conversation.'}
-SPOKEN_BY_NAME = {spoken.name: spoken for spoken in SPOKEN}
-
 
 def _check_table():
-    assert len(SPOKEN_BY_NAME) == len(SPOKEN), 'two spoken commands with one name'
     for spoken in SPOKEN:
         assert spoken.action in ACTIONS or spoken.kind == Kind.WAKE, spoken.name
-        assert spoken.group in GROUP_NAMES, spoken.name
         assert not spoken.fast or not ACTIONS[spoken.action].moves, 'a fast phrase must not drive: ' + spoken.name
-    for language in HELP_INTRO:
-        all_phrases = [phrase for spoken in SPOKEN for phrase in spoken.phrases(language)]
-        duplicates = {phrase for phrase in all_phrases if all_phrases.count(phrase) > 1}
-        assert not duplicates, 'phrase used twice in %s: %s' % (language, duplicates)
-    assert all(any(phrase in spoken.de + spoken.en for spoken in SPOKEN) for phrase in NOT_IN_CONVERSATION)
 
 
 _check_table()
@@ -174,11 +101,6 @@ def run(name, args):
     if not ACTIONS[name].web:
         raise KeyError(name)
     return ACTIONS[name].run(args)
-
-
-def phrases(language):
-    '''Phrase -> Spoken, for the word recogniser.'''
-    return {phrase: spoken for spoken in SPOKEN for phrase in spoken.phrases(language)}
 
 
 def api_names():
@@ -204,14 +126,6 @@ def run_for_claude(name):
     spoken = SPOKEN_BY_NAME[name]
     ACTIONS[spoken.action].run(dict(spoken.args, language='en'))
     return 'claude ran ' + name
-
-
-def help_text(language):
-    groups = []
-    for group, names in GROUP_NAMES.items():
-        words = [spoken.phrases(language)[0] for spoken in SPOKEN if spoken.group == group]
-        groups.append('%s: %s.' % (names[language], ', '.join(words)))
-    return ' '.join([HELP_INTRO[language]] + groups)
 
 
 def speak_help(language):

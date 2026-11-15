@@ -3,41 +3,33 @@ The microphone. It can be opened by one process only, so one capture thread (`ar
 0.1 s chunks) feeds every consumer of a chunk:
   sound_level     level in dBFS for the dashboard
   listeners.py    clap_stop, noise_alarm
-  word_recognizer stop_word, voice_commands, claude_voice phrases (commands.SPOKEN)
+  word_recognizer stop_word, voice_commands, claude_voice phrases (vocabulary.SPOKEN)
   conversation    claude_voice: the sentences after "hey claude"
   record_audio    a .wav next to a video (media.py)
 The capture runs only while at least one of these is on.
 '''
-import audioop
 import collections
 import concurrent.futures
-import math
 import os
 import subprocess
 import threading
 import time
 import wave
 
-from . import alsa, events, features, listeners, voice_protocol, word_recognizer
+from . import alsa, events, features, listeners, vocabulary, voice_protocol, word_recognizer
+from .speech_level import SAMPLE_WIDTH, level_dbfs
 from .conversation import conversation
 
 SAMPLE_RATE = voice_protocol.UTTERANCE_RATE
-SAMPLE_WIDTH = 2
 CHUNK_BYTES = SAMPLE_RATE // 10 * SAMPLE_WIDTH
-FULL_SCALE = 32768.0
 SILENCE_DBFS = -90.0
 RECENT_CHUNKS = 20          # 2 s: the loudest of these must reach the speech level for a phrase to count
-SPEECH_MODELS = {language: os.path.join(features.DATA_DIR, 'models', folder)
-                 for language, folder in (('en', 'vosk-model-small-en-us-0.15'), ('de', 'vosk-model-small-de-0.15'))}
+SPEECH_MODELS = {language: os.path.join(features.DATA_DIR, 'models', folder) for language, folder in vocabulary.MODEL_FOLDERS.items()}
 AUDIO_FEATURES = ('sound_level', 'clap_stop', 'noise_alarm', 'stop_word', 'voice_commands', 'claude_voice')
 IDLE_POLL_S = 0.5
 NO_DEVICE_RETRY_S = 5
 RESTART_PAUSE_S = 1
 ERROR_TAIL_CHARS = 200
-
-
-def level_dbfs(chunk):
-    return round(20 * math.log10(max(audioop.rms(chunk, SAMPLE_WIDTH), 1) / FULL_SCALE), 1)
 
 
 class Microphone(object):

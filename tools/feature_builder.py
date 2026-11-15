@@ -40,6 +40,7 @@ CO_AUTHOR = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 
 FEATURES_FILE = 'remote_control/remote_control/features.py'
 COMMANDS_FILE = 'remote_control/remote_control/commands.py'
+VOCABULARY_FILE = 'remote_control/remote_control/vocabulary.py'
 PROTECTED = ('tools/deploy.sh', 'tools/picar-update.sh', 'tools/systemd/', 'tools/voice_server.py', 'tools/voice_server.bat',
              'tools/feature_builder.py', 'tools/voice_launcher.py', 'tools/car_tunnel.py', 'tools/install_voice_launcher.bat',
              'remote_control/remote_control/voice_protocol.py')
@@ -58,8 +59,9 @@ Chosen option: {option}
 Rules (a script checks them afterwards and rejects the build otherwise):
 - Add exactly one new switch to FEATURES in {features_file}, default False, with a short English help text.
   While the switch is off the feature does nothing (check features.enabled(name) or use features.on_change).
-- Do not change existing switches, the stop phrases (Spoken 'stop' in {commands_file}), or these files: {protected}.
-- A new spoken command is one Spoken line (and if needed one Action) in {commands_file}; add its phrases with the
+- Do not change existing switches, the stop phrases (Spoken 'stop' in {vocabulary_file}), or these files: {protected}.
+- A new spoken command is one Spoken line and one EXPLANATIONS entry in {vocabulary_file} (and if needed one Action
+  in {commands_file}); add its phrases with the
   expected effect to tests/test_commands.py. Every word must be in the Vosk vocabulary (German and English small models).
 - The code must run on the car with the packages it already has (see tools/install_extras.sh and the imports in
   remote_control/remote_control/) and in the PC simulation (PICAR_SIM=1, remote_control/remote_control/sim/).
@@ -111,12 +113,12 @@ def _features_at(source):
 
 
 def _stop_phrases_at(source):
-    '''The German and English phrases of Spoken('stop', ...) in a commands.py source.'''
+    '''The German and English phrases of Spoken('stop', ...) in a vocabulary.py source.'''
     for node in ast.walk(ast.parse(source)):
         if (isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'Spoken' and node.args
                 and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'stop'):
             return [ast.literal_eval(argument) for argument in node.args[4:6]]
-    raise BuildError("Spoken('stop', ...) not found in " + COMMANDS_FILE)
+    raise BuildError("Spoken('stop', ...) not found in " + VOCABULARY_FILE)
 
 
 def check_build(worktree, base):
@@ -132,8 +134,8 @@ def check_build(worktree, base):
     if len(added) != 1:
         problems.append('expected exactly one new switch in FEATURES, found %d: %s' % (len(added), added))
     problems += ['new switch %s must default to False' % name for name in added if new[name] is not False]
-    with open(os.path.join(worktree, COMMANDS_FILE), encoding='utf-8') as source:
-        if _stop_phrases_at(source.read()) != _stop_phrases_at(_git('show', '%s:%s' % (base, COMMANDS_FILE), cwd=worktree)):
+    with open(os.path.join(worktree, VOCABULARY_FILE), encoding='utf-8') as source:
+        if _stop_phrases_at(source.read()) != _stop_phrases_at(_git('show', '%s:%s' % (base, VOCABULARY_FILE), cwd=worktree)):
             problems.append('stop phrases changed')
     if added and not any(_uses(worktree, name, added[0]) for name in changed if name.endswith(('.py', '.js')) and name != FEATURES_FILE):
         problems.append('the new switch %s is not used anywhere outside features.py' % added[0])
@@ -266,7 +268,7 @@ class Builder(object):
             self._log('build %s from %s' % (request['branch'], base[:7]))
             session = None
             prompt = BUILDER_PROMPT.format(title=request['title'], understanding=request['understanding'], option=request['option'],
-                                           features_file=FEATURES_FILE, commands_file=COMMANDS_FILE, protected=', '.join(PROTECTED))
+                                           features_file=FEATURES_FILE, commands_file=COMMANDS_FILE, vocabulary_file=VOCABULARY_FILE, protected=', '.join(PROTECTED))
             for round_number in range(FIX_ROUNDS + 1):
                 session = self._run_builder(prompt, session)
                 problems, feature = check_build(request['worktree'], base)

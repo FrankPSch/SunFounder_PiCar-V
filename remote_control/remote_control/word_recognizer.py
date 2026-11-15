@@ -1,21 +1,19 @@
-'''Offline word recognition (Vosk) of the spoken commands in commands.SPOKEN: one recogniser per language in the
+'''Offline word recognition (Vosk) of the spoken commands in vocabulary.SPOKEN: one recogniser per language in the
 setting voice_languages, each limited to the phrases of the switches that are on. A grammar-limited recogniser maps
 room noise onto its nearest phrase ("halt" twice a minute at -63 dBFS), so a phrase only counts when it was loud
-enough (voice_settings.speech_dbfs) and the recogniser is sure (MIN_WORD_CONF).'''
+enough (voice_settings.speech_dbfs) and the recogniser is sure (vocabulary.MIN_WORD_CONF).'''
 import json
 import os
 import time
 
-from . import commands, events, features, speaker, voice_protocol
+from . import commands, events, features, speaker, vocabulary, voice_protocol
 from .car import car
-from .commands import Kind
 from .conversation import conversation, SHORT_S
+from .vocabulary import Kind, MIN_WORD_CONF, UNKNOWN
 from .voice_settings import parked_speech_dbfs, speech_dbfs, voice_languages
 
 SAMPLE_RATE = voice_protocol.UTTERANCE_RATE
-MIN_WORD_CONF = 0.8
 REPEAT_IGNORE_S = 1.5       # both language recognisers may hear the same phrase
-UNKNOWN = '[unk]'           # stands for speech outside the grammar
 
 
 def _listened_kinds():
@@ -35,7 +33,7 @@ def wanted():
 
 
 def _switch_on(spoken):
-    switch = commands.SWITCH[spoken.kind]
+    switch = vocabulary.SWITCH[spoken.kind]
     return switch is None or features.enabled(switch)
 
 
@@ -73,11 +71,11 @@ class WordRecognizer(object):
 
     def _recognizer(self, vosk, language, kinds):
         model = self._models[language]
-        phrases = sorted(phrase for phrase, spoken in commands.phrases(language).items() if spoken.kind in kinds)
-        self.status['missing_words'][language] = sorted({word for phrase in phrases for word in phrase.split()
+        phrases = vocabulary.grammar(language, kinds)
+        self.status['missing_words'][language] = sorted({word for phrase in phrases[:-1] for word in phrase.split()
                                                          if hasattr(model, 'find_word') and model.find_word(word) < 0})
         # ensure_ascii=False: an escaped umlaut is not found in the vocabulary and the word is silently dropped
-        recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(phrases + [UNKNOWN], ensure_ascii=False))
+        recognizer = vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(phrases, ensure_ascii=False))
         recognizer.SetWords(True)
         return recognizer
 
@@ -95,12 +93,9 @@ class WordRecognizer(object):
             self._partial(language, recognizer, json.loads(recognizer.PartialResult()).get('partial', ''), recent_peak_dbfs)
 
     def _final(self, language, all_words, recent_peak_dbfs):
-        # UNKNOWN stands for speech outside the grammar: "[unk] links" still means "links", except in a conversation
-        words = [word for word in all_words if word['word'] != UNKNOWN]
+        words, text, confidence = vocabulary.heard_words(all_words)  # in a conversation, unknown words make it a sentence
         if not words:
             return
-        text = ' '.join(word['word'] for word in words)
-        confidence = min(word.get('conf', 0) for word in words)
         has_stop_word = any(word['word'] in self._stop_words(language) for word in words)
         if recent_peak_dbfs < (parked_speech_dbfs() if has_stop_word else speech_dbfs()) or confidence < MIN_WORD_CONF:
             self.status['rejected'] = '%s %s conf %.2f peak %.0f dBFS' % (time.strftime('%H:%M:%S'), text, confidence, recent_peak_dbfs)
@@ -116,7 +111,7 @@ class WordRecognizer(object):
             car.stop('voice stop')
             events.add('audio', 'heard "%s" -> STOP' % partial)
             return
-        spoken = commands.phrases(language).get(words)
+        spoken = vocabulary.phrases(language).get(words)
         if (spoken and spoken.fast and recent_peak_dbfs >= speech_dbfs() and features.enabled('voice_commands')
                 and not speaker.speaking.is_set() and not conversation.active()):
             recognizer.Reset()  # or the final result would run it a second time
@@ -124,14 +119,14 @@ class WordRecognizer(object):
 
     @staticmethod
     def _stop_words(language):
-        return [phrase for phrase, spoken in commands.phrases(language).items() if spoken.kind == Kind.STOP]
+        return [phrase for phrase, spoken in vocabulary.phrases(language).items() if spoken.kind == Kind.STOP]
 
     # ---- a recognised phrase ----
     def heard(self, language, text, in_sentence=False, more_words_seconds=None):
         '''in_sentence: part of a longer sentence during a conversation, which goes to Claude and runs nothing.
         more_words_seconds: length of the whole utterance, when it held words outside the grammar.'''
         self.status.update(heard=text, heard_time=time.strftime('%H:%M:%S'))
-        spoken = commands.phrases(language).get(text)
+        spoken = vocabulary.phrases(language).get(text)
         muted = speaker.speaking.is_set()  # stop words stay live while the car speaks and drives
         if spoken and spoken.kind == Kind.WAKE and not muted and _switch_on(spoken):
             self.status['wake_time'] = time.strftime('%H:%M:%S')
@@ -139,12 +134,12 @@ class WordRecognizer(object):
             conversation.start(more_words_seconds)
             return
         if spoken and spoken.kind in (Kind.COMMAND, Kind.SYSTEM) and _switch_on(spoken) and not in_sentence and not muted:
-            if not (text in commands.NOT_IN_CONVERSATION and conversation.active()):
+            if not (text in vocabulary.NOT_IN_CONVERSATION and conversation.active()):
                 self._run(spoken, language, text)
             return
         if any(word in text.split() for word in self._stop_words(language)) and (not in_sentence or car.drive_direction):
             conversation.discard_sentence()
-            commands.run_spoken(commands.SPOKEN_BY_NAME['stop'], language, text)
+            commands.run_spoken(vocabulary.SPOKEN_BY_NAME['stop'], language, text)
 
     def _run(self, spoken, language, text):
         now = time.time()
@@ -158,4 +153,4 @@ class WordRecognizer(object):
         self._last_command = (None, 0.0, None)
 
     def describe(self):
-        return dict(self.status, phrases={language: sorted(commands.phrases(language)) for language in commands.HELP_INTRO})
+        return dict(self.status, phrases={language: sorted(vocabulary.phrases(language)) for language in vocabulary.LANGUAGES})
