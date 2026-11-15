@@ -8,6 +8,7 @@ import sys
 import tarfile
 import wave
 
+import car_ssh
 import car_tunnel
 import pc_settings
 import text_to_speech
@@ -41,7 +42,7 @@ def render_missing(log):
 
 
 def _ssh(command, **options):
-    return subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, command], timeout=SSH_TIMEOUT_S, **options)
+    return subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, command], timeout=SSH_TIMEOUT_S, **options)  # legacy ssh (PC switch car_ssh_module off)
 
 
 def local_recordings():
@@ -52,8 +53,12 @@ def local_recordings():
 
 def copy_missing_to_car(log):
     '''Copies the recordings the car does not have (by file name). Returns how many, or None when the car is not reachable.'''
-    listing = _ssh('mkdir -p {0}/de {0}/en && cd {0} && ls de en'.format(CAR_CACHE), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                   universal_newlines=True)
+    list_command = 'mkdir -p {0}/de {0}/en && cd {0} && ls de en'.format(CAR_CACHE)
+    if pc_settings.switched_on('car_ssh_module'):
+        result = car_ssh.run(list_command, timeout_s=SSH_TIMEOUT_S)
+        listing = subprocess.CompletedProcess([], result.code, result.text)
+    else:
+        listing = _ssh(list_command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True)
     if listing.returncode:
         log('voice cache: car not reachable, copy later')
         return None
@@ -64,8 +69,12 @@ def copy_missing_to_car(log):
         elif line.strip():
             on_car.add('%s/%s' % (folder, line.strip()))
     missing = ['%s/%s' % (language, name) for language, names in local_recordings().items() for name in names if '%s/%s' % (language, name) not in on_car]
-    if missing:
-        untar = subprocess.Popen(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'tar xf - -C ' + CAR_CACHE], stdin=subprocess.PIPE)
+    if missing and pc_settings.switched_on('car_ssh_module'):
+        if car_ssh.copy_tar({name: os.path.join(LOCAL_CACHE, name) for name in missing}, CAR_CACHE, SSH_TIMEOUT_S):
+            log('voice cache: copy to the car failed')
+            return None
+    elif missing:
+        untar = subprocess.Popen(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'tar xf - -C ' + CAR_CACHE], stdin=subprocess.PIPE)  # legacy ssh (PC switch car_ssh_module off)
         with tarfile.open(fileobj=untar.stdin, mode='w|') as archive:
             for name in missing:
                 archive.add(os.path.join(LOCAL_CACHE, name), arcname=name)

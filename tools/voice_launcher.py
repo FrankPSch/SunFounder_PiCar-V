@@ -36,7 +36,7 @@ TUNNEL_RETRY_S = 10
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW: also hides ssh and Piper, which inherit the hidden console
 
 if sys.stdout is None:  # pythonw
-    sys.stdout = sys.stderr = open(os.path.join(VOICE_DIR, 'launcher.log'), 'a', buffering=1, encoding='utf-8')
+    sys.stdout = sys.stderr = open(pc_settings.voice_path('logs', 'launcher.log'), 'a', buffering=1, encoding='utf-8')
 
 
 def log(text):
@@ -81,7 +81,7 @@ class Launcher(object):
         if self.server_state() != 'off':
             return
         log('starting voice server (%s)' % reason)
-        with open(os.path.join(VOICE_DIR, 'server.log'), 'a', encoding='utf-8') as server_log:  # kept: the conversations so far
+        with open(pc_settings.voice_path('logs', 'server.log'), 'a', encoding='utf-8') as server_log:  # kept: the conversations so far
             server_log.write('==== %s voice server start (%s)\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), reason))
             server_log.flush()
             self.process = subprocess.Popen([PYTHON, '-u', os.path.join(HERE, 'voice_server.py')], cwd=HERE, stdout=server_log,

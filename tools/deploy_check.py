@@ -7,6 +7,7 @@ import sys
 import time
 import urllib.request
 
+import car_ssh
 import car_tunnel
 import pc_settings
 import prerender_voice
@@ -24,7 +25,9 @@ def _car_state():
 
 
 def _on_car(command):
-    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    if pc_settings.switched_on('car_ssh_module'):
+        return car_ssh.run(command, timeout_s=SSH_TIMEOUT_S).text
+    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,  # legacy ssh (PC switch car_ssh_module off)
                             timeout=SSH_TIMEOUT_S)
     return result.stdout.decode('utf-8', 'replace')
 

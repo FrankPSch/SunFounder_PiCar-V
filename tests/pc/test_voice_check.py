@@ -19,7 +19,7 @@ import voice_check  # noqa: E402
 from remote_control import phrase_check, requirements, vocabulary  # noqa: E402
 
 MODELS = os.path.join(pc_settings.VOICE_DIR, 'vosk_models')
-OWNER_RECORDINGS = os.path.join(pc_settings.VOICE_DIR, 'recordings')
+OWNER_RECORDINGS = pc_settings.voice_path('data', 'recordings')
 SILENCE = b'\0\0' * phrase_check.SAMPLE_RATE
 STUB_CAR_PORT = 18868
 SYNTHESES = 2

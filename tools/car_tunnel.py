@@ -6,6 +6,9 @@ import os
 import subprocess
 import time
 
+import car_ssh
+import pc_settings
+
 SSH_KEY = os.path.expanduser('~/.ssh/picar_ed25519')
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 SSH_OPTIONS = ['-i', SSH_KEY, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2']
@@ -15,13 +18,18 @@ def _free_car_port(car, port):
     '''Ends the car process listening on 127.0.0.1:port: only called when our own tunnel is not up, so it is a stale one.'''
     # sudo: sshd sessions are not dumpable, so without root neither ss -p nor fuser can see who holds the port
     command = 'sudo -n fuser -k -n tcp %d' % port
-    subprocess.run(['ssh'] + SSH_OPTIONS + [car, command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+    if pc_settings.switched_on('car_ssh_module'):
+        car_ssh.run(command, timeout_s=30)
+        return
+    subprocess.run(['ssh'] + SSH_OPTIONS + [car, command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,  # legacy ssh (PC switch car_ssh_module off)
                    stderr=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=30)
 
 
 def keep_open(car, port, retry_s, log, wanted=lambda: True):
     '''Never returns. wanted(): whether to try now (the launcher skips while the car is off).'''
-    command = ['ssh', '-N'] + SSH_OPTIONS + ['-o', 'ExitOnForwardFailure=yes', '-R', '%d:127.0.0.1:%d' % (port, port), car]
+    command = ['ssh', '-N'] + SSH_OPTIONS + ['-o', 'ExitOnForwardFailure=yes', '-R', '%d:127.0.0.1:%d' % (port, port), car]  # legacy ssh (PC switch car_ssh_module off)
+    if pc_settings.switched_on('car_ssh_module'):
+        command = car_ssh.tunnel(port)
     while True:
         if wanted():
             started = time.time()

@@ -11,6 +11,7 @@ import sys
 import time
 
 import car_facts
+import car_ssh
 import car_tunnel
 import deploy_check
 import integration_lock
@@ -19,8 +20,9 @@ import prerender_voice
 
 TAG_PREFIX = 'deploy/'
 SOURCES = ('chat', 'voice', 'rollback')
-REVIEWS_FILE = os.path.join(pc_settings.VOICE_DIR, 'reviews.json')
+REVIEWS_FILE = pc_settings.voice_path('data', 'reviews.json')
 UPDATE_TIMEOUT_S = 300
+UPDATE_COMMAND = 'sudo /home/pi/SunFounder_PiCar-V/tools/picar-update.sh release'
 TESTS_TIMEOUT_S = 1800
 
 
@@ -66,9 +68,12 @@ def previous_deploy(running_commit, tags):
 
 def update_car(log):
     '''The car pulls the release branch now (picar-update.sh: restart, health check, rollback when unhealthy).'''
-    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'sudo /home/pi/SunFounder_PiCar-V/tools/picar-update.sh release'],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=UPDATE_TIMEOUT_S)
-    log('car update: ' + (result.stdout.decode('utf-8', 'replace').strip().splitlines() or ['no output'])[-1])
+    if pc_settings.switched_on('car_ssh_module'):
+        output = car_ssh.run(UPDATE_COMMAND, timeout_s=UPDATE_TIMEOUT_S, with_errors=True).text
+    else:
+        output = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, UPDATE_COMMAND],  # legacy ssh (PC switch car_ssh_module off)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=UPDATE_TIMEOUT_S).stdout.decode('utf-8', 'replace')
+    log('car update: ' + (output.strip().splitlines() or ['no output'])[-1])
 
 
 def after_deploy(source, commit, log):

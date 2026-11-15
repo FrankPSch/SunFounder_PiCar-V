@@ -7,10 +7,11 @@ import os
 import subprocess
 import time
 
+import car_ssh
 import car_tunnel
 import pc_settings
 
-FACTS_FILE = os.path.join(pc_settings.VOICE_DIR, 'car_facts.json')
+FACTS_FILE = pc_settings.voice_path('generated', 'car_facts.json')
 SSH_TIMEOUT_S = 60
 SECTIONS = ('arch', 'os', 'python', 'apt', 'pip', 'sound', 'models', 'voice_cache', 'disk_free', 'commit')
 REMOTE_SCRIPT = '''
@@ -32,8 +33,12 @@ KEY_SOFTWARE = ('espeak-ng', 'mbrola', 'opencv-data', 'python3-opencv', 'ffmpeg'
 def measure(log=print):
     '''Measures and saves the facts. Returns them, or None when the car is not reachable (the last ones stay).'''
     # bytes, not text: Windows text mode would send CRLF line ends, which the car's shell cannot read
-    result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'sh -s'], input=REMOTE_SCRIPT.encode('utf-8'), stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, timeout=SSH_TIMEOUT_S)
+    if pc_settings.switched_on('car_ssh_module'):
+        result = car_ssh.run_script(REMOTE_SCRIPT, SSH_TIMEOUT_S)
+        result = subprocess.CompletedProcess([], result.code, result.output)
+    else:
+        result = subprocess.run(['ssh'] + car_tunnel.SSH_OPTIONS + [pc_settings.CAR, 'sh -s'], input=REMOTE_SCRIPT.encode('utf-8'), stdout=subprocess.PIPE,  # legacy ssh (PC switch car_ssh_module off)
+                                stderr=subprocess.DEVNULL, timeout=SSH_TIMEOUT_S)
     output = result.stdout.decode('utf-8', 'replace') if isinstance(result.stdout, bytes) else result.stdout
     if result.returncode or '==== commit' not in output:
         log('car facts: car not reachable, keeping the last measurement')

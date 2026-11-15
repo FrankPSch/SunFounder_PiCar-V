@@ -13,11 +13,11 @@ import pc_settings
 import wish_list
 from remote_control import requirements
 
-CATALOG_FILE = os.path.join(pc_settings.VOICE_DIR, 'requirements_catalog.json')
-COVERAGE_FILE = os.path.join(pc_settings.VOICE_DIR, 'coverage.jsonl')
-REAL_CAR_FILE = os.path.join(pc_settings.VOICE_DIR, 'real_car_results.jsonl')    # tools/deploy_check.py
-OWNER_VOICE_FILE = os.path.join(pc_settings.VOICE_DIR, 'recordings', 'results.jsonl')  # learning sessions, copied from the car
-STATUS_FILE = os.path.join(pc_settings.VOICE_DIR, 'requirements_status.json')
+CATALOG_FILE = pc_settings.voice_path('generated', 'requirements_catalog.json')
+COVERAGE_FILE = pc_settings.voice_path('generated', 'coverage.jsonl')
+REAL_CAR_FILE = pc_settings.voice_path('data', 'real_car_results.jsonl')        # tools/deploy_check.py: evidence, kept
+OWNER_VOICE_FILE = pc_settings.voice_path('data', 'recordings', 'results.jsonl')  # learning sessions, copied from the car
+STATUS_FILE = pc_settings.voice_path('generated', 'requirements_status.json')
 MARKDOWN_FILE = os.path.join(pc_settings.REPO, 'project', 'generated', 'REQUIREMENTS.md')
 LEVELS = {'S': 'System', 'V': 'Voice commands', 'K': 'Dashboard and web (click)', 'C': 'Claude'}
 MARK = {'auto': 'A', 'real car': 'R', 'your voice': 'Y', 'manual': 'M'}
