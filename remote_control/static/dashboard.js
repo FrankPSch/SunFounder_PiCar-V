@@ -170,6 +170,23 @@ function renderTiles(t) {
   ].join('');
 }
 
+// Every setting of events.EDITABLE_SETTINGS, from the state: a new setting shows here by itself
+function renderSettings(settings, types) {
+  const box = $('#settings');
+  const names = Object.keys(types);
+  if (box.childElementCount !== names.length) {
+    box.innerHTML = names.map((name) => `<label class="feature-row"><b>${name}</b><input data-setting="${name}" type="${types[name].type === 'int' ? 'number' : 'text'}"><small>${types[name].help}</small></label>`).join('');
+    box.querySelectorAll('[data-setting]').forEach((input) => input.addEventListener('change', () => {
+      send('setting', { name: input.dataset.setting, value: input.type === 'number' ? +input.value : input.value.trim() });
+      input.blur();
+    }));
+  }
+  for (const name of names) {
+    const input = box.querySelector(`[data-setting="${name}"]`);
+    if (document.activeElement !== input) input.value = settings[name] ?? '';
+  }
+}
+
 function renderFeatures(featureList) {
   const box = $('#features');
   if (box.childElementCount !== featureList.length) {
@@ -214,6 +231,7 @@ function render(state) {
 
   renderExtras(state);
   renderFeatures(state.features);
+  renderSettings(state.settings, state.setting_types);
   renderTiles(Object.assign({}, t, { car }));
   $('#warnings').textContent = (t.warnings || []).join(' · ');
   drawOverlay(tracker);

@@ -22,6 +22,7 @@ import car_tunnel
 import claude_chat
 import feature_builder
 import pc_settings
+import prerender_voice
 import speech_to_text
 import text_to_speech
 
@@ -207,6 +208,7 @@ def main():
     for language in protocol.LANGUAGES:
         speech_to_text.transcribe(text_to_speech.synthesize('Hallo.', language))
     threading.Thread(target=car_tunnel.keep_open, args=(pc_settings.CAR, protocol.VOICE_PORT, TUNNEL_RETRY_S, log), name='tunnel', daemon=True).start()
+    threading.Thread(target=prerender_voice.update, args=(log,), name='voice-cache', daemon=True).start()  # the car's own sentences
     print('ready: model %s, whisper %s' % (claude_chat.MODEL, speech_to_text.WHISPER_SIZE), flush=True)
     http.server.ThreadingHTTPServer(('127.0.0.1', protocol.VOICE_PORT), Handler).serve_forever()
 

@@ -1,12 +1,11 @@
 '''The car's speaker: one sound at a time (speech lock), and the flag `speaking` that mutes the word recogniser
 meanwhile (the car must not obey its own voice).
-  say(text, language)      espeak-ng, blocking; say_later() in a thread
+  say(text, language)      blocking; say_later() in a thread. Switch natural_voice: the recordings of the PC's Piper
+                           voice (voice_cache.py, made by tools/prerender_voice.py), else espeak-ng
   play_tones(Tone.START)   short beeps
   open_stream(rate)        raw 16-bit mono audio from the PC, written in pieces, then close()
 The Jabra SPEAK 510 plays 16 kHz audio 3x too fast while its mic records (2 s played in 0.77 s, measured 2026-11-14),
-48 kHz at the right speed: everything goes out at PLAYBACK_RATE.
-Feature mbrola_voice: say() uses an MBROLA voice (softer, e.g. mb-de5) when it is installed (tools/install_extras.sh),
-its 16 kHz output resampled to PLAYBACK_RATE; without the voice files, plain espeak-ng as before.'''
+48 kHz at the right speed: everything goes out at PLAYBACK_RATE.'''
 import audioop
 import enum
 import math
@@ -14,21 +13,22 @@ import os
 import struct
 import subprocess
 import threading
+import io
 import time
+import wave
 
-from . import alsa, features
+from . import alsa, features, voice_cache
 
 PLAYBACK_RATE = 48000
 SAMPLE_WIDTH = 2
 ECHO_S = 0.5                # the room still rings after the speaker stops
 DRAIN_TIMEOUT_S = 120
-SAY_TIMEOUT_S = 15
+PLAY_MARGIN_S = 10          # the player may take this much longer than the audio lasts
 ESPEAK_WORDS_PER_MINUTE = '150'
 TONE_NOTE_S = 0.12
 TONE_AMPLITUDE = 9000
-MBROLA_DIR = '/usr/share/mbrola'
-MBROLA_VOICES = {'de': ('de5', 'de7'), 'en': ('en1',)}  # first installed one wins
-WAV_HEADER_BYTES = 44                                    # espeak-ng --stdout: plain 44-byte header, rate at bytes 24-27
+CACHE_DIR = os.path.join(features.DATA_DIR, 'voice_cache')
+CLIP_PAUSE_S = 0.12         # between stitched recordings ("31" "von" "33")
 
 speaking = threading.Event()
 _lock = threading.Lock()
@@ -45,52 +45,54 @@ def _aplay(rate):
     return ['aplay', '-q', '-t', 'raw', '-f', 'S16_LE', '-c', '1', '-r', str(rate)] + (['-D', device] if device else [])
 
 
-def mbrola_voice(language):
-    '''espeak-ng name of the installed MBROLA voice for this language, None when mbrola_voice is off or none is installed.'''
-    if not features.enabled('mbrola_voice'):
-        return None
-    return next(('mb-' + name for name in MBROLA_VOICES.get(language, ()) if os.path.isfile(os.path.join(MBROLA_DIR, name, name))), None)
+def _play(audio):
+    '''Raw PLAYBACK_RATE audio, blocking for as long as it lasts.'''
+    seconds = len(audio) / float(SAMPLE_WIDTH * PLAYBACK_RATE)
+    subprocess.run(_aplay(PLAYBACK_RATE), input=audio, stderr=subprocess.DEVNULL, timeout=seconds + PLAY_MARGIN_S)
 
 
-def describe():
-    if not features.enabled('mbrola_voice'):
-        return {'mbrola': 'off', 'voices': {}}
-    voices = {language: mbrola_voice(language) for language in MBROLA_VOICES}
-    installed = {language: name for language, name in voices.items() if name}
-    return {'mbrola': 'ok' if installed else 'missing in %s (tools/install_extras.sh)' % MBROLA_DIR, 'voices': installed}
+def _recorded(clips):
+    '''The recordings in a row at PLAYBACK_RATE, a short pause between them.'''
+    pause = bytes(1) * (int(CLIP_PAUSE_S * PLAYBACK_RATE) * SAMPLE_WIDTH)
+    pieces = []
+    for clip in clips:
+        with wave.open(clip, 'rb') as recording:
+            audio, rate = recording.readframes(recording.getnframes()), recording.getframerate()
+        pieces.append(audioop.ratecv(audio, SAMPLE_WIDTH, 1, rate, PLAYBACK_RATE, None)[0])
+    return pause.join(pieces)
 
 
-def _say_mbrola(voice_name, text):
-    '''True when the MBROLA voice spoke; False lets say() fall back to plain espeak-ng.'''
-    wav = subprocess.run(['espeak-ng', '-v', voice_name, '-s', ESPEAK_WORDS_PER_MINUTE, '--stdout', text],
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S).stdout
-    if len(wav) <= WAV_HEADER_BYTES:
-        print('speaker: %s gave no audio, plain espeak-ng instead' % voice_name)
-        return False
-    wav_rate = struct.unpack('<I', wav[24:28])[0]
-    samples = wav[WAV_HEADER_BYTES:]
-    audio, _ = audioop.ratecv(samples[:len(samples) - len(samples) % SAMPLE_WIDTH], SAMPLE_WIDTH, 1, wav_rate, PLAYBACK_RATE, None)
-    subprocess.run(_aplay(PLAYBACK_RATE), input=audio, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S)
-    return True
+def _espeak(text, language):
+    wav = subprocess.run(['espeak-ng', '-v', language, '-s', ESPEAK_WORDS_PER_MINUTE, '--stdout', text],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=PLAY_MARGIN_S).stdout
+    with wave.open(io.BytesIO(wav), 'rb') as voice:
+        audio, rate = voice.readframes(voice.getnframes()), voice.getframerate()
+    return audioop.ratecv(audio, SAMPLE_WIDTH, 1, rate, PLAYBACK_RATE, None)[0]
+
+
+def natural_clips(text, language):
+    '''The recordings that say text, or None (switch off, or not all of it recorded).'''
+    return voice_cache.clips(CACHE_DIR, language, text) if features.enabled('natural_voice') else None
 
 
 def say(text, language='en'):
     with _lock:
         speaking.set()
         try:
-            voice_name = mbrola_voice(language)
-            if voice_name and _say_mbrola(voice_name, text):
-                time.sleep(ECHO_S)
-                return
-            voice = subprocess.run(['espeak-ng', '-v', language, '-s', ESPEAK_WORDS_PER_MINUTE, '--stdout', text],
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S)
-            device = alsa.usb_device('aplay')
-            subprocess.run(['aplay', '-q'] + (['-D', device] if device else []), input=voice.stdout, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S)
+            clips = natural_clips(text, language)
+            _play(_recorded(clips) if clips else _espeak(text, language))
             time.sleep(ECHO_S)
-        except (OSError, subprocess.SubprocessError) as error:
+        except (OSError, subprocess.SubprocessError, wave.Error, EOFError) as error:
             print('speaker: say failed: %s' % error)
         finally:
             speaking.clear()
+
+
+def describe():
+    recordings = {language: len(os.listdir(os.path.join(CACHE_DIR, language))) for language in ('de', 'en')
+                  if os.path.isdir(os.path.join(CACHE_DIR, language))}
+    voice = 'natural' if features.enabled('natural_voice') and recordings else 'espeak'
+    return {'voice': voice, 'recordings': recordings}
 
 
 def say_later(text, language='en'):

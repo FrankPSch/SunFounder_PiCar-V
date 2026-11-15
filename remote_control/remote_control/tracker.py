@@ -17,7 +17,7 @@ import urllib.request
 import cv2
 import numpy as np
 
-from . import events, features, rooms
+from . import events, features, rooms, spoken_texts
 from .car import car, SIM, DEGREES_PER_TICK, STEER_MIN, STEER_MAX
 
 SNAPSHOT_URL = 'http://127.0.0.1:8080/?action=snapshot'
@@ -289,7 +289,7 @@ class Tracker(object):
         previous = self.status['treasure']['color']
         self.status['treasure'].update(color=random.choice([c for c in COLOR_PRESETS if c != previous]), progress=0)
         color = self.status['treasure']['color']
-        events.add('treasure', 'find something %s!' % color, say='find something %s' % color)
+        events.add('treasure', 'find something %s!' % color, say=spoken_texts.TREASURE % color)
 
     def _treasure_step(self, frame):
         treasure = self.status['treasure']

@@ -8,6 +8,7 @@ import os
 import threading
 
 from . import events, features, phrase_check, speaker, vocabulary
+from .spoken_texts import LEARNING
 from .car import car
 from .phrase_check import Verdict
 
@@ -18,9 +19,6 @@ MAX_TRIES = 3
 QUIET_TRIES_TO_END = 3                  # nobody there any more
 NOT_PRACTISED = ('learn', 'learn_stop')
 RUNS_WHILE_LEARNING = ('learn_stop',)   # besides the stop words
-MESSAGES = {'start': {'de': 'Wir lernen die Befehle. Sprich jeden nach dem Piepton nach.',
-                      'en': 'Let us learn the commands. Repeat each one after the beep.'},
-            'end': {'de': 'Lernen beendet. %d von %d verstanden.', 'en': 'Learning finished. %d of %d understood.'}}
 
 
 def practice_phrases(language, group=None):
@@ -70,10 +68,10 @@ class Session(object):
         finally:
             understood, practised = self._score()
             self.status.update(active=False, phrase=None)
-            speaker.say(MESSAGES['end'][language] % (understood, practised), language)
+            speaker.say('%s %s' % (LEARNING['end'][language], LEARNING['score'][language] % (understood, practised)), language)
 
     def _practise(self, language, models, group):
-        speaker.say(MESSAGES['start'][language], language)
+        speaker.say(LEARNING['start'][language], language)
         current_group, quiet_in_a_row = None, 0
         for spoken, phrase in practice_phrases(language, group):
             if self._ending.is_set():

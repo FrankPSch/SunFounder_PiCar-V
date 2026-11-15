@@ -15,6 +15,11 @@ from . import features, speaker
 
 SETTINGS_FILE = os.path.join(features.DATA_DIR, 'settings.json')
 EDITABLE_SETTINGS = {'timelapse_seconds': int, 'ntfy_topic': str, 'mic_device': str, 'voice_languages': str}
+SETTING_HELP = {'timelapse_seconds': 'seconds between timelapse photos',
+                'ntfy_topic': 'ntfy.sh topic for push_notifications',
+                'mic_device': 'ALSA microphone, e.g. plughw:CARD=USB,DEV=0; empty = first USB microphone',
+                'voice_languages': 'de, en or de,en: the languages the car listens for and Claude may answer in'}
+assert set(SETTING_HELP) == set(EDITABLE_SETTINGS), 'SETTING_HELP and EDITABLE_SETTINGS differ'
 LOG_LENGTH = 200
 PUSH_TIMEOUT_S = 10
 log = collections.deque(maxlen=LOG_LENGTH)

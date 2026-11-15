@@ -13,15 +13,14 @@ import subprocess
 from django.http import FileResponse, Http404, HttpResponseBadRequest, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render_to_response
 
-from . import audio, commands, events, features, media, rooms, speaker, telemetry
+from . import audio, commands, events, features, media, rooms, speaker, spoken_texts, telemetry
 from .car import car, SIM
 from .tracker import tracker
 
-STARTUP_MESSAGE = 'Ich bin bereit.'  # every start of the car software: boot, restart, update
 
 telemetry.start(tracker.describe)
 if not SIM:
-    speaker.say_later(STARTUP_MESSAGE, 'de')
+    speaker.say_later(spoken_texts.STARTUP[1], spoken_texts.STARTUP[0])  # every start: boot, restart, update
 
 
 def _apply_auto_update(name, is_on):
@@ -30,35 +29,6 @@ def _apply_auto_update(name, is_on):
 
 
 features.on_change(_apply_auto_update)
-
-mbrola_check = {'said': None}  # feature mbrola_check: the last voice report, for the dashboard state
-
-
-def _check_mbrola(name, is_on):
-    '''Feature mbrola_check: the soft voice becomes the default (mbrola_voice on) and the car says which voice speaks.'''
-    if name not in ('mbrola_check', 'mbrola_voice') or not features.enabled('mbrola_check'):
-        if name == 'mbrola_check':
-            mbrola_check['said'] = None
-        return
-    if name == 'mbrola_check' and not features.enabled('mbrola_voice'):
-        features.set_enabled('mbrola_voice', True)  # calls this listener again for mbrola_voice, which reports
-        return
-    voice_name = speaker.mbrola_voice('de')
-    if voice_name:
-        text = 'Ich spreche mit der weichen MBROLA Stimme.'
-    elif features.enabled('mbrola_voice'):
-        text = 'Die weiche Stimme fehlt, ich spreche mit espeak.'
-    else:
-        text = 'Die weiche Stimme ist aus, ich spreche mit espeak.'
-    mbrola_check['said'] = text
-    events.add('speaker', 'voice check: %s (%s)' % (voice_name or 'espeak-ng', speaker.describe()['mbrola']))
-    speaker.say_later(text, 'de')
-
-
-features.on_change(_check_mbrola)
-if features.enabled('mbrola_check'):
-    _check_mbrola('mbrola_check', True)
-
 
 def _stream_url(request):
     if SIM:
@@ -79,8 +49,9 @@ def state(request):
     return JsonResponse({
         'car': car.state(), 'tracker': tracker.describe(), 'features': features.describe(),
         'telemetry': telemetry.latest, 'stream_url': _stream_url(request),
-        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'mbrola_check': mbrola_check, 'media': media.describe(), 'rooms': rooms.describe(),
+        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
         'events': events.recent(), 'settings': {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS},
+        'setting_types': {name: {'type': kind.__name__, 'help': events.SETTING_HELP[name]} for name, kind in events.EDITABLE_SETTINGS.items()},
     })
 
 

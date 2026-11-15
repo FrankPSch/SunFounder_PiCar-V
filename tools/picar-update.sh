@@ -11,7 +11,8 @@ HEALTH_TIMEOUT_S=90
 
 as_pi() { runuser -u pi -- "$@"; }
 
-say() {  # German, on the first USB speaker like alsa.usb_device (internal cards: alsa.INTERNAL_AUDIO_CARDS)
+say() {  # German, in the natural voice when recorded (tools/say.py, spoken_texts.UPDATE), else espeak-ng on the first USB speaker
+    as_pi python3 "$REPO/tools/say.py" de "$1" 2>/dev/null && return
     speaker=$(aplay -l 2>/dev/null | sed -n 's/^card [0-9]*: \([A-Za-z0-9_]*\) \[.*\], device \([0-9]*\):.*/\1 \2/p' \
               | grep -v -e '^Headphones ' -e '^vc4hdmi ' | head -n 1 | sed 's/\(.*\) \(.*\)/plughw:CARD=\1,DEV=\2/')
     espeak-ng -v de -s 140 --stdout "$1" 2>/dev/null | aplay -q ${speaker:+-D "$speaker"} 2>/dev/null || true
@@ -50,7 +51,7 @@ say "Update startet. Ich bin gleich wieder da."
 systemctl start picar
 if wait_healthy; then
     write_status updated "$old_commit" "$new_commit" ""
-    sleep 5  # after the car's own "Ich bin bereit" (api.STARTUP_MESSAGE): the speaker plays one sound at a time
+    sleep 5  # after the car's own "Ich bin bereit" (spoken_texts.STARTUP): the speaker plays one sound at a time
     say "Update fertig."
     exit 0
 fi

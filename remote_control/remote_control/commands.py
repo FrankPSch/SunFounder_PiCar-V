@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Callable, List
 
-from . import events, features, learning, media, rooms, speaker, voice_link
+from . import events, features, learning, media, rooms, speaker, spoken_texts, voice_link
 from .car import car
 from .tracker import tracker
 from .vocabulary import Kind, MOVING_ACTIONS, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, LANGUAGES, help_text
@@ -72,7 +72,7 @@ def _switch_voice_server(action):
         events.add('voice', problem)
         speaker.play_tones(speaker.Tone.FAILED)
         return
-    events.add('voice', 'voice server ' + ('ready' if action == 'start' else 'stopped'), say='claude ' + ('ready' if action == 'start' else 'off'))
+    events.add('voice', 'voice server ' + ('ready' if action == 'start' else 'stopped'), say=spoken_texts.VOICE_SERVER[action])
     speaker.play_tones(speaker.Tone.START if action == 'start' else speaker.Tone.END)
 
 
@@ -131,7 +131,7 @@ def api_names():
 def run_spoken(spoken, language, heard_text):
     '''A recognised phrase: runs its action and logs it (spoken name as the voice prompt).'''
     ACTIONS[spoken.action].run(dict(spoken.args, language=language))
-    events.add('audio', 'voice command: %s -> %s' % (heard_text, spoken.name), say=spoken.name.replace('_', ' '))
+    events.add('audio', 'voice command: %s -> %s' % (heard_text, spoken.name), say=spoken_texts.command_reply(spoken))
 
 
 def for_claude() -> List[List[str]]:

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import django  # noqa: E402
 django.setup()
 
-from remote_control import audio, features, learning, phrase_check, speaker  # noqa: E402
+from remote_control import audio, features, learning, phrase_check, speaker, spoken_texts  # noqa: E402
 from remote_control.car import car  # noqa: E402
 
 LOUD_CHUNK = b'\x00\x40' * (phrase_check.CHUNK_BYTES // 2)
@@ -67,7 +67,7 @@ class SessionTest(unittest.TestCase):
     def test_tries_until_understood_and_keeps_every_try(self):
         self.run_session([None, 'foto', 'bild', 'rechts', 'rechts', 'rechts', 'aufnahme stopp'])
         self.assertEqual(self.heard, ['foto', 'foto', 'bild', 'aufnahme', 'aufnahme', 'aufnahme', 'aufnahme stopp'])
-        self.assertEqual(self.said[:5], [learning.MESSAGES['start']['de'], 'Fotos und Videos', 'foto. Macht ein Foto.', 'zu leise', 'verstanden'])
+        self.assertEqual(self.said[:5], [spoken_texts.LEARNING['start']['de'], 'Fotos und Videos', 'foto. Macht ein Foto.', 'zu leise', 'verstanden'])
         self.assertIn('falsch verstanden: rechts', self.said)
         self.assertEqual(self.said[-1], 'Lernen beendet. 3 von 4 verstanden.')
         self.assertEqual(sorted(os.listdir(os.path.join(self.folder, 'parked', 'de'))),
