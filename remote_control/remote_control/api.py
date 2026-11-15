@@ -51,7 +51,7 @@ def state(request):
     return JsonResponse({
         'car': car.state(), 'tracker': tracker.describe(), 'features': features.describe(),
         'telemetry': telemetry.latest, 'stream_url': _stream_url(request),
-        'audio': audio.microphone.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
+        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
         'events': events.recent(), 'settings': {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS},
     })
 

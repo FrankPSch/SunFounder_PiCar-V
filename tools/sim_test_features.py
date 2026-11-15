@@ -160,5 +160,14 @@ s = cmd('feature', name='dashboard_pause_switch', on=False)
 check('dashboard_pause_switch off', (enabled(s, 'dashboard_pause_switch'), enabled(s, 'pause_voice_commands')), (False, False))
 check('dashboard_pause_switch does not drive', state()['car']['drive_direction'], 0)
 
+# mbrola_voice: no MBROLA voice files on the PC -> reported missing, speech stays plain espeak-ng
+check('mbrola_voice off by default', state()['speaker'], {'mbrola': 'off', 'voices': {}})
+s = cmd('feature', name='mbrola_voice', on=True)
+check('mbrola_voice on', enabled(s, 'mbrola_voice'), True)
+check('mbrola voice missing is reported (sim)', (s['speaker']['mbrola'].startswith('missing'), s['speaker']['voices']), (True, {}))
+s = cmd('feature', name='mbrola_voice', on=False)
+check('mbrola_voice off', (enabled(s, 'mbrola_voice'), s['speaker']), (False, {'mbrola': 'off', 'voices': {}}))
+check('mbrola_voice does not drive', state()['car']['drive_direction'], 0)
+
 check('events logged', len(state()['events']) >= 5, True)
 print('RESULT:', 'ALL PASS' if not failures else 'FAILED: %s' % failures)

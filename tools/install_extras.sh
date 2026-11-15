@@ -2,11 +2,13 @@
 # Runs ON THE PI (as pi). One-time install of the optional extras; each feature reports "missing" until done.
 #   face_tracking   -> opencv-data (Haar cascades)
 #   voice_prompts   -> espeak-ng
+#   mbrola_voice    -> mbrola + voices de5, en1 (optional: without them the car speaks plain espeak-ng)
 #   stop_word, voice_commands -> vosk 0.3.45 (armv7l wheel) + vosk-model-small-en-us-0.15 (41 MB) + vosk-model-small-de-0.15 (46 MB)
 #   animal_tracking -> MobileNet-SSD Caffe model (chuanqi305, 23 MB)
 set -e
 MODELS=/home/pi/picar-data/models
 sudo apt-get install -y -q opencv-data espeak-ng unzip
+sudo apt-get install -y -q mbrola mbrola-de5 mbrola-en1 || echo "mbrola voices not installed - mbrola_voice falls back to espeak-ng"
 sudo pip3 install -q vosk==0.3.45
 mkdir -p "$MODELS" && cd "$MODELS"
 for model in vosk-model-small-en-us-0.15 vosk-model-small-de-0.15; do

@@ -4,16 +4,19 @@ meanwhile (the car must not obey its own voice).
   play_tones(Tone.START)   short beeps
   open_stream(rate)        raw 16-bit mono audio from the PC, written in pieces, then close()
 The Jabra SPEAK 510 plays 16 kHz audio 3x too fast while its mic records (2 s played in 0.77 s, measured 2026-11-14),
-48 kHz at the right speed: everything goes out at PLAYBACK_RATE.'''
+48 kHz at the right speed: everything goes out at PLAYBACK_RATE.
+Feature mbrola_voice: say() uses an MBROLA voice (softer, e.g. mb-de5) when it is installed (tools/install_extras.sh),
+its 16 kHz output resampled to PLAYBACK_RATE; without the voice files, plain espeak-ng as before.'''
 import audioop
 import enum
 import math
+import os
 import struct
 import subprocess
 import threading
 import time
 
-from . import alsa
+from . import alsa, features
 
 PLAYBACK_RATE = 48000
 SAMPLE_WIDTH = 2
@@ -23,6 +26,9 @@ SAY_TIMEOUT_S = 15
 ESPEAK_WORDS_PER_MINUTE = '150'
 TONE_NOTE_S = 0.12
 TONE_AMPLITUDE = 9000
+MBROLA_DIR = '/usr/share/mbrola'
+MBROLA_VOICES = {'de': ('de5', 'de7'), 'en': ('en1',)}  # first installed one wins
+WAV_HEADER_BYTES = 44                                    # espeak-ng --stdout: plain 44-byte header, rate at bytes 24-27
 
 speaking = threading.Event()
 _lock = threading.Lock()
@@ -39,10 +45,43 @@ def _aplay(rate):
     return ['aplay', '-q', '-t', 'raw', '-f', 'S16_LE', '-c', '1', '-r', str(rate)] + (['-D', device] if device else [])
 
 
+def mbrola_voice(language):
+    '''espeak-ng name of the installed MBROLA voice for this language, None when mbrola_voice is off or none is installed.'''
+    if not features.enabled('mbrola_voice'):
+        return None
+    return next(('mb-' + name for name in MBROLA_VOICES.get(language, ()) if os.path.isfile(os.path.join(MBROLA_DIR, name, name))), None)
+
+
+def describe():
+    if not features.enabled('mbrola_voice'):
+        return {'mbrola': 'off', 'voices': {}}
+    voices = {language: mbrola_voice(language) for language in MBROLA_VOICES}
+    installed = {language: name for language, name in voices.items() if name}
+    return {'mbrola': 'ok' if installed else 'missing in %s (tools/install_extras.sh)' % MBROLA_DIR, 'voices': installed}
+
+
+def _say_mbrola(voice_name, text):
+    '''True when the MBROLA voice spoke; False lets say() fall back to plain espeak-ng.'''
+    wav = subprocess.run(['espeak-ng', '-v', voice_name, '-s', ESPEAK_WORDS_PER_MINUTE, '--stdout', text],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S).stdout
+    if len(wav) <= WAV_HEADER_BYTES:
+        print('speaker: %s gave no audio, plain espeak-ng instead' % voice_name)
+        return False
+    wav_rate = struct.unpack('<I', wav[24:28])[0]
+    samples = wav[WAV_HEADER_BYTES:]
+    audio, _ = audioop.ratecv(samples[:len(samples) - len(samples) % SAMPLE_WIDTH], SAMPLE_WIDTH, 1, wav_rate, PLAYBACK_RATE, None)
+    subprocess.run(_aplay(PLAYBACK_RATE), input=audio, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S)
+    return True
+
+
 def say(text, language='en'):
     with _lock:
         speaking.set()
         try:
+            voice_name = mbrola_voice(language)
+            if voice_name and _say_mbrola(voice_name, text):
+                time.sleep(ECHO_S)
+                return
             voice = subprocess.run(['espeak-ng', '-v', language, '-s', ESPEAK_WORDS_PER_MINUTE, '--stdout', text],
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=SAY_TIMEOUT_S)
             device = alsa.usb_device('aplay')
