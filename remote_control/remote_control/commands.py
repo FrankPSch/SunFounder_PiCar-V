@@ -14,7 +14,7 @@ from typing import Callable, List
 from . import events, features, learning, media, rooms, speaker, voice_link
 from .car import car
 from .tracker import tracker
-from .vocabulary import Kind, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, LANGUAGES, help_text
+from .vocabulary import Kind, MOVING_ACTIONS, SPOKEN, SPOKEN_BY_NAME, GROUP_NAMES, LANGUAGES, help_text
 from .voice_settings import voice_languages
 
 DRIVE_BURST_S = 1.4         # a spoken "vorwärts" drives this long; the watchdog stops the car after it
@@ -100,6 +100,7 @@ ACTIONS = {
 
 
 def _check_table():
+    assert MOVING_ACTIONS == {name for name, action in ACTIONS.items() if action.moves}, 'vocabulary.MOVING_ACTIONS is out of date'
     for spoken in SPOKEN:
         assert spoken.action in ACTIONS or spoken.kind == Kind.WAKE, spoken.name
         assert not spoken.fast or not ACTIONS[spoken.action].moves, 'a fast phrase must not drive: ' + spoken.name

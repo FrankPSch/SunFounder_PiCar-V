@@ -121,7 +121,7 @@ class WordRecognizer(object):
         '''in_sentence: part of a longer sentence during a conversation, which goes to Claude and runs nothing.
         more_words_seconds: length of the whole utterance, when it held words outside the grammar.'''
         self.status.update(heard=text, heard_time=time.strftime('%H:%M:%S'))
-        spoken = vocabulary.phrases(language).get(text)
+        phrase, spoken = vocabulary.match(language, text)
         muted = speaker.speaking.is_set()  # stop words stay live while the car speaks and drives
         if learning.session.active() and not (spoken and spoken.name in learning.RUNS_WHILE_LEARNING):
             muted = True  # the owner is repeating phrases: only stop and "Lernen beenden" act
@@ -131,7 +131,7 @@ class WordRecognizer(object):
             conversation.start(more_words_seconds)
             return
         if spoken and spoken.kind in (Kind.COMMAND, Kind.SYSTEM) and _switch_on(spoken) and not in_sentence and not muted:
-            if not (text in vocabulary.NOT_IN_CONVERSATION and conversation.active()):
+            if not (phrase in vocabulary.NOT_IN_CONVERSATION and conversation.active()):
                 self._run(spoken, language, text)
             return
         if any(word in text.split() for word in self._stop_words(language)) and (not in_sentence or car.drive_direction):

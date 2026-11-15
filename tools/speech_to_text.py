@@ -1,11 +1,9 @@
 '''Whisper on the PC's GPU: the car's 16 kHz utterance -> text and language.'''
 import os
 
-import pc_settings
-
-pc_settings.add_dll_dirs()  # before faster_whisper loads CUDA
-import numpy as np  # noqa: E402
-from faster_whisper import WhisperModel  # noqa: E402
+import pc_settings  # before faster_whisper: puts the CUDA DLLs on PATH
+import numpy as np
+from faster_whisper import WhisperModel
 
 WHISPER_SIZE = os.environ.get('WHISPER_SIZE', 'small')  # GTX 1070: small 0.8 s, medium 1.5 s for a 4.5 s sentence
 NOT_SPEECH_PROBABILITY = 0.6

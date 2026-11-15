@@ -5,6 +5,7 @@ import os
 import re
 import threading
 
+import pc_settings  # noqa: F401  before anthropic: puts the ssl DLLs on PATH
 import anthropic
 
 MODEL = os.environ.get('CLAUDE_VOICE_MODEL', 'claude-opus-5-5')

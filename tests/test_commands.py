@@ -202,6 +202,16 @@ class SpokenPhraseTest(CommandTest):
             car.set_cam(30, -30)
             car.set_steer(STEER_MAX)
 
+    def test_noise_word_before_a_phrase(self):
+        '''Room noise heard as a grammar word in front: the phrase still counts, unless it drives (2026-11-15).'''
+        hear('de', 'oben claude starten')
+        self.assertEqual(self.calls, ['server start'])
+        hear('de', 'oben kamera hoch')
+        self.assertEqual(car.state()['tilt_ticks'], 20)
+        for text in ('oben vorwärts', 'hey claude los', 'foto zurück'):
+            hear('de', text)
+        self.assertEqual(car.state()['drive_direction'], 0)
+
     def test_voice_commands_switch_off(self):
         features.set_enabled('voice_commands', False)
         hear('de', 'links')

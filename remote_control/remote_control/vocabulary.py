@@ -14,6 +14,7 @@ SPEED_STEP = 10
 CAM_STEPS = 10
 UNKNOWN = '[unk]'           # Vosk's word for speech outside the grammar
 MIN_WORD_CONF = 0.8         # below this the recogniser guessed: a grammar-limited recogniser maps noise onto its nearest phrase
+MOVING_ACTIONS = frozenset(('drive', 'drive_burst', 'keepalive', 'room_goto'))  # commands.ACTIONS with moves=True (checked there)
 MODEL_FOLDERS = {'de': 'vosk-model-small-de-0.15', 'en': 'vosk-model-small-en-us-0.15'}  # in <data>/models, tools/install_extras.sh
 
 
@@ -130,6 +131,18 @@ _check_table()
 def phrases(language):
     '''Phrase -> Spoken, for the word recogniser.'''
     return {phrase: spoken for spoken in SPOKEN for phrase in spoken.phrases(language)}
+
+
+def match(language, text):
+    '''(phrase, Spoken) for a recognised text, or (None, None): the whole text, else the longest phrase it ends with
+    when other grammar words came first (room noise heard as "oben" before "claude starten", 2026-11-15).
+    A phrase that drives the car only counts whole: "hey claude los" must not drive.'''
+    known = phrases(language)
+    if text in known:
+        return text, known[text]
+    endings = [phrase for phrase, spoken in known.items() if text.endswith(' ' + phrase) and spoken.action not in MOVING_ACTIONS]
+    phrase = max(endings, key=len, default=None)
+    return phrase, known.get(phrase)
 
 
 def grammar(language, kinds) -> List[str]:

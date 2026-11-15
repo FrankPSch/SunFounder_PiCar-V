@@ -54,7 +54,7 @@ class Hearing(object):
             return Verdict.QUIET
         if not self.heard:
             return Verdict.NOTHING
-        if vocabulary.phrases(self.language).get(self.heard) != vocabulary.phrases(self.language)[self.phrase]:
+        if vocabulary.match(self.language, self.heard)[1] != vocabulary.phrases(self.language)[self.phrase]:  # as the car decides
             return Verdict.OTHER
         return Verdict.UNDERSTOOD if self.confidence >= vocabulary.MIN_WORD_CONF else Verdict.UNSURE
 

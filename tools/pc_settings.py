@@ -14,4 +14,8 @@ from remote_control import voice_protocol  # noqa: E402,F401  (re-exported for t
 
 
 def add_dll_dirs():
-    os.environ['PATH'] = os.pathsep.join(DLL_DIRS + (os.environ['PATH'],))
+    missing = [folder for folder in DLL_DIRS if folder not in os.environ['PATH'].split(os.pathsep)]
+    os.environ['PATH'] = os.pathsep.join(missing + [os.environ['PATH']])
+
+
+add_dll_dirs()  # on import: the launcher starts the voice server without them, and ssl (anthropic) fails without its DLLs

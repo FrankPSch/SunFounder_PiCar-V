@@ -4,6 +4,7 @@ import http.client
 import http.server
 import json
 import os
+import subprocess
 import sys
 import threading
 import unittest
@@ -145,6 +146,13 @@ class LauncherTest(unittest.TestCase):
 
     def test_old_server_without_shutdown(self):
         self.assertEqual(self.stop_with(404), 502)
+
+    def test_voice_server_starts_as_the_launcher_starts_it(self):
+        '''Started from the Windows Startup folder, the server's PATH lacks the DLL folders (ssl failed 2026-11-15).'''
+        clean_path = os.pathsep.join(folder for folder in os.environ['PATH'].split(os.pathsep) if folder not in pc_settings.DLL_DIRS)
+        result = subprocess.run([voice_launcher.PYTHON, '-c', 'import voice_server'], cwd=voice_launcher.HERE, env=dict(os.environ, PATH=clean_path),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout[-2000:])
 
     def test_car_gone_stops_the_server_and_clears_the_voice_stop(self):
         launcher = voice_launcher.Launcher()
