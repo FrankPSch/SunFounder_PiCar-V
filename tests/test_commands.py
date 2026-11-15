@@ -34,7 +34,7 @@ SPOKEN = {
         'kamera links': ('pan_ticks', 20), 'kamera rechts': ('pan_ticks', -20),
         'kamera hoch': ('tilt_ticks', 20), 'kamera oben': ('tilt_ticks', 20),
         'kamera runter': ('tilt_ticks', -20), 'kamera unten': ('tilt_ticks', -20),
-        'mitte': ('cam_centred', True), 'startklar': ('ready', True),
+        'mitte': ('cam_centred', True), 'kamera mitte': ('cam_centred', True), 'startklar': ('ready', True),
         'foto': ('calls', ['snapshot']), 'bild': ('calls', ['snapshot']),
         'aufnahme': ('calls', ['start_recording']), 'aufnahme stopp': ('calls', ['stop_recording']),
         'folge ball': ('feature_on', 'ball_tracking'), 'folge gesicht': ('feature_on', 'face_tracking'),
@@ -66,7 +66,7 @@ SPOKEN = {
 # Phrases that need the car to be driving to show their effect, and the steering ones that start from another angle.
 NEEDS_DRIVING = {'stopp', 'stop', 'halt', 'anhalten'}
 STARTS_TURNED = {'geradeaus', 'straight'}
-STARTS_MOVED = {'mitte', 'center', 'startklar', 'ready'}
+STARTS_MOVED = {'mitte', 'kamera mitte', 'center', 'startklar', 'ready'}
 NOT_IN_CONVERSATION = {'go', 'los'}  # they confirm a feature build ("go") in a conversation
 
 # POST /api/cmd -> expected effect
