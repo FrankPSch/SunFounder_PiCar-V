@@ -207,7 +207,7 @@ class Tracker(object):
     def _read_qr(self, frame):
         text, points, _ = cv2.QRCodeDetector().detectAndDecode(frame)
         if text and (not self.status['qr'] or self.status['qr']['text'] != text):
-            events.add('vision', 'QR code: ' + text, say='QR code')
+            events.add('vision', 'QR code: ' + text, say=spoken_texts.EVENTS['qr_code'])
         if text:
             self.status['qr'] = {'text': text, 'time': time.strftime('%H:%M:%S')}
 
@@ -289,7 +289,7 @@ class Tracker(object):
         previous = self.status['treasure']['color']
         self.status['treasure'].update(color=random.choice([c for c in COLOR_PRESETS if c != previous]), progress=0)
         color = self.status['treasure']['color']
-        events.add('treasure', 'find something %s!' % color, say=spoken_texts.TREASURE % color)
+        events.add('treasure', 'find something %s!' % color, say=spoken_texts.treasure(color))
 
     def _treasure_step(self, frame):
         treasure = self.status['treasure']
@@ -300,7 +300,7 @@ class Tracker(object):
             treasure['progress'] += 1
             if treasure['progress'] >= TREASURE_FRAMES:
                 treasure['score'] += 1
-                events.add('treasure', 'found %s! score %d' % (treasure['color'], treasure['score']), say='well done')
+                events.add('treasure', 'found %s! score %d' % (treasure['color'], treasure['score']), say=spoken_texts.EVENTS['treasure_found'])
                 self.next_treasure()
         else:
             treasure['progress'] = 0

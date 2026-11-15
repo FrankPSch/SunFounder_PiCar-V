@@ -2,7 +2,7 @@
 Each gets every 0.1 s microphone chunk with its level from audio.py.'''
 import audioop
 
-from . import events, features, media
+from . import events, features, media, spoken_texts
 from .car import car
 
 CLAP_PEAK = 20000           # of 32767
@@ -24,7 +24,7 @@ class ClapStop(object):
             if CLAP_GAP_S[0] <= now - self._last_clap <= CLAP_GAP_S[1]:
                 self.claps += 1
                 car.stop('double clap')
-                events.add('audio', 'double clap -> STOP', say='stop')
+                events.add('audio', 'double clap -> STOP', say=spoken_texts.EVENTS['clap_stop'])
                 self._last_clap = 0.0
             else:
                 self._last_clap = now

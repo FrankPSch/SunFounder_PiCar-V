@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.request
 
-from . import features, speaker
+from . import features, speaker, spoken_texts
 
 SETTINGS_FILE = os.path.join(features.DATA_DIR, 'settings.json')
 EDITABLE_SETTINGS = {'timelapse_seconds': int, 'ntfy_topic': str, 'mic_device': str, 'voice_languages': str}
@@ -50,7 +50,7 @@ def add(source, text, push=False, say=None):
     if push and features.enabled('push_notifications'):
         threading.Thread(target=_push, args=(text,), daemon=True).start()
     if say and features.enabled('voice_prompts'):
-        speaker.say_later(say)
+        speaker.say_later(say, spoken_texts.EVENT_LANGUAGE)
     return entry
 
 

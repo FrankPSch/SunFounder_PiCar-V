@@ -211,10 +211,10 @@ class SpokenPhraseTest(CommandTest):
         said = []
         features.set_enabled('voice_prompts', True)
         self.addCleanup(features.set_enabled, 'voice_prompts', False)
-        with mock.patch.object(speaker, 'say_later', lambda text, language='en': said.append(text)):
+        with mock.patch.object(speaker, 'say_later', lambda text, language='en': said.append((language, text))):
             hear('de', 'mitte')
-            hear('de', 'kamera links')
-        self.assertEqual(said, ['camera center', 'camera left'])
+            hear('en', 'camera left')
+        self.assertEqual(said, [('de', 'kamera mitte'), ('de', 'kamera links')])  # one voice: German, Thorsten
 
     def test_every_dashboard_switch(self):
         '''What a dashboard switch sends (POST feature): each one turns on and off. Its listeners are left out here,

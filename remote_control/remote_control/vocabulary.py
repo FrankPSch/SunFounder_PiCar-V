@@ -61,7 +61,7 @@ SPOKEN = (
     Spoken('camera_right', 'camera', 'cam_move', {'pan': -CAM_STEPS}, ('kamera rechts',), ('camera right',)),
     Spoken('camera_up', 'camera', 'cam_move', {'tilt': CAM_STEPS}, ('kamera hoch', 'kamera oben'), ('camera up',)),
     Spoken('camera_down', 'camera', 'cam_move', {'tilt': -CAM_STEPS}, ('kamera runter', 'kamera unten'), ('camera down',)),
-    Spoken('camera_center', 'camera', 'cam_center', {}, ('mitte', 'kamera mitte'), ('center',)),
+    Spoken('camera_center', 'camera', 'cam_center', {}, ('kamera mitte', 'mitte'), ('center',)),
     Spoken('follow_ball', 'follow', 'feature', {'name': 'ball_tracking', 'on': True}, ('folge ball',), ('follow ball',)),
     Spoken('follow_face', 'follow', 'feature', {'name': 'face_tracking', 'on': True}, ('folge gesicht',), ('follow face',)),
     Spoken('treasure_hunt', 'follow', 'feature', {'name': 'treasure_hunt', 'on': True}, ('schatzsuche',), ('treasure hunt',)),

@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from . import events, features
+from . import events, features, spoken_texts
 from .car import car, DEGREES_PER_TICK, STEER_MIN, STEER_MAX, CAM_HALF_RANGE_TICKS
 
 ROOMS_FILE = os.path.join(features.DATA_DIR, 'rooms.json')
@@ -83,7 +83,7 @@ def goto(room_name):
         raise ValueError('no marker named %r' % room_name)
     nav.update(state='scan', target=room_name, target_id=ids[0], message='searching', retries=0, last_seen=0.0, scan_dir=1)
     car.center_cam()
-    events.add('rooms', 'going to ' + room_name, say='going to ' + room_name)
+    events.add('rooms', 'going to ' + room_name, say=spoken_texts.ROOMS['going'] % room_name)
 
 
 def cancel(reason='cancelled'):
@@ -96,7 +96,7 @@ def cancel(reason='cancelled'):
 def _finish(state, message, push=False):
     car.stop('navigation ' + state)
     nav.update(state=state, message=message)
-    events.add('rooms', message, push=push, say=message)
+    events.add('rooms', message, push=push, say=spoken_texts.ROOMS[state] % nav['target'])
 
 
 def navigate_step(markers):

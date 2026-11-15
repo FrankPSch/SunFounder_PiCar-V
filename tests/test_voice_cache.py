@@ -48,6 +48,12 @@ class CatalogTest(unittest.TestCase):
             texts = re.findall(r'^\s*say "(.+)"$', script.read(), re.M)
         self.assertEqual(sorted(texts), sorted(spoken_texts.UPDATE.values()))
 
+    def test_the_car_speaks_german_on_its_own(self):
+        '''One voice for everything the car says by itself: Thorsten (German). English is left only for an English
+        learning session or help; Claude's English answers come from the PC.'''
+        self.assertEqual(spoken_texts.EVENT_LANGUAGE, 'de')
+        self.assertTrue(all(('de', spoken_texts.command_reply(spoken)) in spoken_texts.sentences() for spoken in spoken_texts.vocabulary.SPOKEN))
+
     def test_natural_voice_is_on_by_default(self):
         self.assertTrue(features.FEATURES['natural_voice'][0])
 
@@ -56,8 +62,8 @@ class CatalogTest(unittest.TestCase):
 
     def test_learning_and_command_texts(self):
         sentences = spoken_texts.sentences()
-        for expected in (('de', 'links. Lenkt nach links.'), ('de', 'falsch verstanden'), ('de', '31'), ('de', 'von'), ('en', 'camera center'),
-                         ('de', 'Lernen beendet.'), ('en', 'find something red'), spoken_texts.STARTUP):
+        for expected in (('de', 'links. Lenkt nach links.'), ('de', 'falsch verstanden'), ('de', '31'), ('de', 'von'), ('de', 'kamera mitte'),
+                         ('de', 'Lernen beendet.'), ('de', 'Finde etwas in Rot.'), ('de', 'Claude ist bereit.'), spoken_texts.STARTUP):
             self.assertIn(expected, sentences)
 
 

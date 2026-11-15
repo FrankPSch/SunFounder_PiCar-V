@@ -9,7 +9,7 @@ import threading
 import time
 import urllib.request
 
-from . import events, features
+from . import events, features, spoken_texts
 from .car import SIM
 
 MEDIA_DIR = os.path.join(features.DATA_DIR, 'media')
@@ -55,7 +55,7 @@ def start_recording():
     if features.enabled('record_audio'):
         from . import audio
         audio.start_wav(os.path.join(MEDIA_DIR, name.replace('.mjpg', '.wav')))
-    events.add('media', 'recording started: ' + name, say='recording')
+    events.add('media', 'recording started: ' + name, say=spoken_texts.EVENTS['recording'])
     return name
 
 
