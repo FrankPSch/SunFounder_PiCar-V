@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 WISHES_FILE = 'wishes.jsonl'
 MARKDOWN_FILE = 'PiCar_Wishes.md'
@@ -14,7 +15,8 @@ STEP_FIELDS = ('title', 'understanding', 'options', 'language', 'option', 'branc
 
 
 def new_id():
-    return time.strftime('%Y%m%d-%H%M%S')
+    '''When it was spoken, and unique even for two wishes in one second.'''
+    return '%s-%s' % (time.strftime('%Y%m%d-%H%M%S'), uuid.uuid4().hex[:4])
 
 
 class WishList(object):

@@ -18,6 +18,7 @@ import threading
 import time
 import urllib.parse
 
+import car_facts
 import car_tunnel
 import claude_chat
 import feature_builder
@@ -111,6 +112,10 @@ class Turn(object):
             return builder.propose(arguments['title'], arguments['understanding'], arguments['options'], self.language)
         if name == 'start_build':
             return builder.start(arguments['option'], transcript)
+        if name == 'car_facts':
+            return car_facts.summary()
+        if name == 'hand_to_chat':
+            return builder.hand_to_chat(arguments['title'], arguments['understanding'], arguments['reason'], self.language)
         return builder.deploy(transcript)
 
 
@@ -208,7 +213,7 @@ def main():
     for language in protocol.LANGUAGES:
         speech_to_text.transcribe(text_to_speech.synthesize('Hallo.', language))
     threading.Thread(target=car_tunnel.keep_open, args=(pc_settings.CAR, protocol.VOICE_PORT, TUNNEL_RETRY_S, log), name='tunnel', daemon=True).start()
-    threading.Thread(target=prerender_voice.update, args=(log,), name='voice-cache', daemon=True).start()  # the car's own sentences
+    threading.Thread(target=lambda: (car_facts.measure(log), prerender_voice.update(log)), name='car-facts', daemon=True).start()  # what the car has, its sentences
     print('ready: model %s, whisper %s' % (claude_chat.MODEL, speech_to_text.WHISPER_SIZE), flush=True)
     http.server.ThreadingHTTPServer(('127.0.0.1', protocol.VOICE_PORT), Handler).serve_forever()
 

@@ -30,6 +30,22 @@ SYSTEM_PROMPT = (
     'offer two or three short numbered options for how to build it, call propose_feature, and ask the owner to say "go" with '
     'the number. Call start_build only after the owner said "go". When a build is ready and the owner says "deploy", '
     'call deploy_feature. The status line tells you the state of the current feature request.')
+CLAUDE_MD = os.path.join(pc_settings.REPO, 'CLAUDE.md')
+CAR_SECTION = '## For Claude on the car'
+
+
+def project_instructions():
+    '''The section of CLAUDE.md meant for Claude voice: how we work, read at every start of the voice server.'''
+    try:
+        with open(CLAUDE_MD, encoding='utf-8') as claude_md:
+            text = claude_md.read()
+    except OSError:
+        return ''
+    section = text.split(CAR_SECTION, 1)[1] if CAR_SECTION in text else ''
+    return section.split('\n## ', 1)[0].strip()
+
+
+INSTRUCTIONS = SYSTEM_PROMPT + ('\n\nProject rules (from CLAUDE.md):\n' + project_instructions() if project_instructions() else '')
 SPOKEN_ERROR = {'de': 'Ich kann Claude gerade nicht erreichen.', 'en': 'I cannot reach Claude right now.'}
 SPOKEN_REFUSAL = {'de': 'Dazu kann ich nichts sagen.', 'en': 'I cannot help with that.'}
 
@@ -51,6 +67,10 @@ TOOLS = [
     _tool('start_build', 'Build the proposed feature. Only after the owner said "go".',
           {'option': {'type': 'string', 'description': 'the option the owner chose, in full'}}, ['option']),
     _tool('deploy_feature', 'Install the built feature on the car. Only after the owner said "deploy".', {}, []),
+    _tool('car_facts', 'What is really installed on the car (measured): check it before propose_feature.', {}, []),
+    _tool('hand_to_chat', 'Write down a wish the voice build cannot do (software the car lacks, hardware, PC changes) for Claude in the chat.',
+          {'title': {'type': 'string', 'description': 'two to five words'}, 'understanding': {'type': 'string'},
+           'reason': {'type': 'string', 'description': 'one sentence why the chat must do it'}}, ['title', 'understanding', 'reason']),
 ]
 TOOL_TYPES = {tool['name']: {key: value['type'] for key, value in tool['input_schema']['properties'].items()} for tool in TOOLS}
 JSON_TYPES = {'string': str, 'boolean': bool, 'array': list}
@@ -91,7 +111,7 @@ class Chat(object):
     def _stream(self, turn, run_tool):
         options = {'output_config': {'effort': EFFORT}} if EFFORT else {}
         while True:
-            with self.client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM_PROMPT, messages=turn, tools=TOOLS,
+            with self.client.messages.stream(model=MODEL, max_tokens=MAX_TOKENS, system=INSTRUCTIONS, messages=turn, tools=TOOLS,
                                              cache_control={'type': 'ephemeral'}, **options) as stream:
                 unfinished = ''
                 for text in stream.text_stream:
