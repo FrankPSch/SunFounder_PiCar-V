@@ -45,6 +45,7 @@ FEATURES = {
     'voice_prompts':      (False, 'Speak events with espeak-ng (needs a speaker)'),
     'push_notifications': (False, 'Send alarms to ntfy.sh (needs ntfy_topic in settings.json)'),
     'mbrola_voice':       (False, 'Speak with a softer MBROLA voice (mb-de5, mb-en1) when installed, else plain espeak-ng'),
+    'mbrola_check':       (False, 'Turn mbrola_voice on and say aloud which voice speaks (at start and when either switch flips)'),
 }
 TRACKING_FEATURES = ('ball_tracking', 'face_tracking', 'animal_tracking')
 

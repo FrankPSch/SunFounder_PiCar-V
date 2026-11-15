@@ -31,6 +31,34 @@ def _apply_auto_update(name, is_on):
 
 features.on_change(_apply_auto_update)
 
+mbrola_check = {'said': None}  # feature mbrola_check: the last voice report, for the dashboard state
+
+
+def _check_mbrola(name, is_on):
+    '''Feature mbrola_check: the soft voice becomes the default (mbrola_voice on) and the car says which voice speaks.'''
+    if name not in ('mbrola_check', 'mbrola_voice') or not features.enabled('mbrola_check'):
+        if name == 'mbrola_check':
+            mbrola_check['said'] = None
+        return
+    if name == 'mbrola_check' and not features.enabled('mbrola_voice'):
+        features.set_enabled('mbrola_voice', True)  # calls this listener again for mbrola_voice, which reports
+        return
+    voice_name = speaker.mbrola_voice('de')
+    if voice_name:
+        text = 'Ich spreche mit der weichen MBROLA Stimme.'
+    elif features.enabled('mbrola_voice'):
+        text = 'Die weiche Stimme fehlt, ich spreche mit espeak.'
+    else:
+        text = 'Die weiche Stimme ist aus, ich spreche mit espeak.'
+    mbrola_check['said'] = text
+    events.add('speaker', 'voice check: %s (%s)' % (voice_name or 'espeak-ng', speaker.describe()['mbrola']))
+    speaker.say_later(text, 'de')
+
+
+features.on_change(_check_mbrola)
+if features.enabled('mbrola_check'):
+    _check_mbrola('mbrola_check', True)
+
 
 def _stream_url(request):
     if SIM:
@@ -51,7 +79,7 @@ def state(request):
     return JsonResponse({
         'car': car.state(), 'tracker': tracker.describe(), 'features': features.describe(),
         'telemetry': telemetry.latest, 'stream_url': _stream_url(request),
-        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'media': media.describe(), 'rooms': rooms.describe(),
+        'audio': audio.microphone.describe(), 'speaker': speaker.describe(), 'mbrola_check': mbrola_check, 'media': media.describe(), 'rooms': rooms.describe(),
         'events': events.recent(), 'settings': {name: events.settings().get(name) for name in events.EDITABLE_SETTINGS},
     })
 
