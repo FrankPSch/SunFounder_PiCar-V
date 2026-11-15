@@ -85,7 +85,8 @@ class Launcher(object):
             server_log.write('==== %s voice server start (%s)\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), reason))
             server_log.flush()
             self.process = subprocess.Popen([PYTHON, '-u', os.path.join(HERE, 'voice_server.py')], cwd=HERE, stdout=server_log,
-                                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+                                            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                                            env=dict(os.environ, PYTHONIOENCODING='utf-8'))  # the log is read as UTF-8, not cp1252
 
     def stop(self, reason):
         '''HTTP status: 200 stopped (or was off), 409 a feature build or deploy runs, 502 the server refused.'''
