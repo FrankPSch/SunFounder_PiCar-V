@@ -54,10 +54,11 @@ check('stop button', state()['car']['drive_direction'], 0)
 
 # tracking: camera must follow the moving sim ball in integer steps
 cmd('cam_center'); cmd('cam_step', value=5); cmd('track_color', name='red'); cmd('feature', name='ball_tracking', on=True)
-samples, centred, offsets, pans = 0, 0, [], set()
+samples, looked, centred, offsets, pans = 0, 0, 0, [], set()
 deadline = time.time() + 20
 while time.time() < deadline:
     t = state()
+    looked += 1
     tr, car = t['tracker'], t['car']
     pans.add(car['pan_ticks'])
     if tr.get('found'):
@@ -65,9 +66,10 @@ while time.time() < deadline:
         centred += bool(tr.get('centred'))
         offsets.append(max(abs(tr['x'] - 0.5), abs(tr['y'] - 0.5)))
     time.sleep(0.25)
-print('tracking: found in %d samples, centred %d, fps %s, max offset %.3f, median offset %.3f, distinct pan values %d'
-      % (samples, centred, tr['fps'], max(offsets or [1]), sorted(offsets or [1])[len(offsets or [1]) // 2], len(pans)))
-check('tracking: ball found most of the time', samples >= 60, True)
+print('tracking: found in %d of %d samples, centred %d, fps %s, max offset %.3f, median offset %.3f, distinct pan values %d'
+      % (samples, looked, centred, tr['fps'], max(offsets or [1]), sorted(offsets or [1])[len(offsets or [1]) // 2], len(pans)))
+# a share, not a count: a busy PC answers state() slower, so fewer samples fit in the 20 s
+check('tracking: ball found most of the time', looked >= 20 and samples >= 0.75 * looked, True)
 check('tracking: median offset < 10% of image', sorted(offsets)[len(offsets) // 2] < 0.10, True)
 check('tracking: pan moved in multiples of step 5', all(p % 5 == 0 for p in pans), True)
 teach = cmd('track_teach')

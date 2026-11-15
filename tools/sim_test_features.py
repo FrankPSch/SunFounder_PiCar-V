@@ -111,6 +111,7 @@ cmd('feature', name='room_navigation', on=True)
 cmd('room_goto', name='kitchen')
 s = wait_for(lambda c: c['rooms']['nav']['state'] == 'approach')
 check('navigation finds marker -> approach', s['rooms']['nav']['state'], 'approach')
+s = wait_for(lambda c: c['car']['drive_direction'] == 1)  # driving starts with the next camera frame after "approach"
 check('navigation drives forward slowly', (s['car']['drive_direction'], s['car']['speed']), (1, 25))
 cmd('room_cancel')
 s = state()
