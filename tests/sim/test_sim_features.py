@@ -17,7 +17,7 @@ shows = requirements.shows
 SYSTEM_SWITCHES = ('watchdog', 'telemetry', 'power_warning', 'stuck_detection')
 FEATURES_SOURCE = os.path.join(REPO, 'remote_control', 'remote_control', 'features.py')
 TREASURE_COLOURS = ('red', 'orange', 'yellow', 'green', 'blue', 'purple')
-TREASURE_TRIES = 12
+TREASURE_TRIES = 60          # each next colour is one of five others: 60 tries miss red once in 10^6 runs
 LOUD_DBFS = -20
 MIC_RATE = 16000
 SERVICES_SOURCE = os.path.join(REPO, 'remote_control', 'remote_control', 'services.py')
@@ -123,6 +123,7 @@ class Features(SimCase):
     @shows(('K.switch.treasure_hunt', 'on'), ('K.switch.treasure_hunt', 'off'), ('K.command.treasure_next', 'run'))
     def test_06_treasure_hunt_scores_the_red_ball(self):
         self.cmd('feature', name='treasure_hunt', on=True)
+        self.addCleanup(self.cmd, 'feature', name='treasure_hunt', on=False)    # also when it fails: later tests need it off
         first = self.wait_until(lambda state: state['tracker']['treasure']['color'], what='a treasure colour')['tracker']['treasure']['color']
         self.assertIn(first, TREASURE_COLOURS)
         self.cmd('treasure_next')
@@ -131,6 +132,7 @@ class Features(SimCase):
             if self.state()['tracker']['treasure']['color'] == 'red':
                 break
             self.cmd('treasure_next')
+        self.assertEqual(self.state()['tracker']['treasure']['color'], 'red', 'the game came to red')
         self.cmd('cam_step', value=5)
         self.wait_until(lambda state: state['tracker']['treasure']['score'] >= 1, 25, 'a point for the red ball')
         self.cmd('feature', name='treasure_hunt', on=False)
@@ -196,7 +198,12 @@ class Features(SimCase):
         dashboard_html = self.get('/').decode('utf-8')
         for marker in ('id="features"', 'id="settings"', 'href="/cali/"') + tuple('id="chart-%s"' % name for name in ('temp', 'wifi', 'ram', 'power')):
             self.assertIn(marker, dashboard_html)
-        self.assertIn(b'cali_ok', self.get('/cali/'), 'the calibration page the dashboard links to')
+        calibration_page = self.get('/cali/').decode('utf-8')
+        self.assertIn('cali_ok', calibration_page, 'the calibration page the dashboard links to')
+        self.assertNotRegex(calibration_page, r"(?m)^\s*run_action\('(cam|fw|bw)cali'\)", 'opening the page starts nothing')
+        self.assertIn("start('bw', 'The rear wheels will spin", calibration_page, 'the rear wheels ask first')
+        self.get('/cali/?action=bwstop')
+        self.assertEqual(self.state()['car']['drive_direction'], 0)
         self.assertEqual(self.cmd('setting', name='voice_languages', value='de,en')['settings']['voice_languages'], 'de,en')
         self.cmd('setting', name='voice_languages', value='de')
         history_columns = json.loads(self.get('/api/history?minutes=60').decode('utf-8'))['columns']

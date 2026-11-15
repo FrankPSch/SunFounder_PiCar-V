@@ -134,6 +134,8 @@ def cali(request):
 		elif action == 'bwcaliok':
 			print('"%s" command received' % action)
 			bw.cali_ok()
+		elif action == 'bwstop':	# the page's stop button, and leaving the page while the rear wheels spin
+			bw.stop()
 		else:
 			print('command error, error command "%s" received' % action)
 	return render_to_response("cali.html")

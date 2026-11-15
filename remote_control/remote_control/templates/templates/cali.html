@@ -15,9 +15,19 @@ Calibration
 
 {% block content %}
   <script type="text/javascript">
-    run_action('camcali')
-    run_action('fwcali')
-    run_action('bwcali')
+    // Nothing starts when the page opens: each part starts with its own button (the rear wheels spin while they are
+    // calibrated, so they ask first). OK saves only the parts that were started; leaving the page stops the rear wheels.
+    var started = {};
+    function start(part, question){
+      if (question && !confirm(question)) return;
+      run_action(part + 'cali');
+      started[part] = true;
+    }
+    function stop_rear_wheels(){
+      run_action('bwstop');
+      delete started['bw'];
+    }
+    window.addEventListener('pagehide', function(){ if (started['bw']) fetch(window.location.pathname + '?action=bwstop', {keepalive: true}); });
     function run_action(value){
       var xmlHttp  = new XMLHttpRequest();
       var protocol  = window.location.protocol;
@@ -38,9 +48,8 @@ Calibration
       return xmlHttp.responseText;
     }
     function cali_ok(){
-      run_action('camcaliok');
-      run_action('fwcaliok');
-      run_action('bwcaliok');
+      for (var part in started) run_action(part + 'caliok');
+      started = {};
       back();
       back();
     }
@@ -50,7 +59,7 @@ Calibration
     <div class="mui-row">
       <div class="mui-col-xs-10 mui-col-sm-10 mui-col-sm-offset-1 mui-col-xs-offset-1", align="left">
         <div class="mui--text-headline mui--text-dark-secondary">
-          Camera Calibration:
+          Camera Calibration: <button class="mui-btn mui-btn--small" onclick="start('cam')">start</button>
         </div>
       </div>
     </div>
@@ -87,7 +96,7 @@ Calibration
     <div class="mui-row">
       <div class="mui-col-xs-10 mui-col-sm-10 mui-col-sm-offset-1 mui-col-xs-offset-1", align="left">
         <div class="mui--text-headline mui--text-dark-secondary">
-          Front Wheels Calibration:
+          Front Wheels Calibration: <button class="mui-btn mui-btn--small" onclick="start('fw')">start</button>
         </div>
       </div>
     </div>
@@ -117,6 +126,8 @@ Calibration
       <div class="mui-col-xs-10 mui-col-sm-10 mui-col-sm-offset-1 mui-col-xs-offset-1", align="left">
         <div class="mui--text-headline mui--text-dark-secondary">
           Rear Wheels Calibration:
+          <button class="mui-btn mui-btn--small" onclick="start('bw', 'The rear wheels will spin until you press stop or OK. Lift the car off the ground first. Start?')">start</button>
+          <button class="mui-btn mui-btn--small mui-btn--danger" onclick="stop_rear_wheels()">stop</button>
         </div>
       </div>
     </div>
