@@ -22,13 +22,13 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.request
 
 import car_facts
 import integration_lock
 import pc_settings
 import release
 import requirements_report
+import twin
 import wish_list
 
 WORK_DIR = os.environ.get('PICAR_WORK_DIR', pc_settings.VOICE_DIR)
@@ -201,39 +201,24 @@ def _uses(worktree, name, feature):
 
 
 def run_sim_tests(worktree):
-    '''Both simulation suites against a fresh simulated car. Returns (passed, last lines of the output).'''
-    data_dir = tempfile.mkdtemp(prefix='simdata_', dir=WORK_DIR)
-    env = dict(os.environ, PICAR_SIM='1', PICAR_DATA=data_dir, PYTHONIOENCODING='utf-8',
-               PATH=os.pathsep.join((r'C:\ProgramData\Anaconda3\Library\bin', os.environ['PATH'])))
-    server_log = open(os.path.join(data_dir, 'server.log'), 'wb')  # a pipe nobody reads would fill up and stall the server
-    server = subprocess.Popen([SIM_PYTHON, 'manage.py', 'runserver', '--noreload', '127.0.0.1:%d' % SIM_PORT],
-                              cwd=os.path.join(worktree, 'remote_control'), env=env, stdout=server_log, stderr=subprocess.STDOUT)
+    '''Both simulation suites against a fresh simulated car on a car-like picar-data folder (the twin).
+    Returns (passed, last lines of the output).'''
+    data_dir = twin.seed_car_data(tempfile.mkdtemp(prefix='simdata_', dir=WORK_DIR))
     try:
-        base_url = 'http://127.0.0.1:%d' % SIM_PORT
-        for _ in range(60):
-            try:
-                urllib.request.urlopen(base_url + '/api/state', timeout=2).read()
-                break
-            except OSError:
-                if server.poll() is not None:
-                    server_log.close()
-                    with open(server_log.name, encoding='utf-8', errors='replace') as log:
-                        return False, 'simulated car did not start:\n' + log.read()[-2000:]
-                time.sleep(0.5)
-        report = []
-        for test in ('tools/sim_test.py', 'tools/sim_test_features.py'):
-            code, output = _run([SIM_PYTHON, test, base_url], cwd=worktree, timeout=300, env=env)
-            if code == 0 and 'ALL PASS' in output:
-                report.append(test + ': ALL PASS')
-                continue
-            failed_lines = [line for line in output.splitlines() if 'FAIL' in line or 'Error' in line or 'Traceback' in line]
-            report.append('%s: FAILED\n%s' % (test, '\n'.join(failed_lines[-15:]) or output[-1500:]))
-            return False, '\n'.join(report)
-        return True, '\n'.join(report)
+        with twin.SimCar(worktree, SIM_PORT, data_dir, SIM_PYTHON) as car:
+            report = []
+            for test in ('tools/sim_test.py', 'tools/sim_test_features.py'):
+                code, output = _run([SIM_PYTHON, test, car.url], cwd=worktree, timeout=300, env=car.env)
+                if code == 0 and 'ALL PASS' in output:
+                    report.append(test + ': ALL PASS')
+                    continue
+                failed_lines = [line for line in output.splitlines() if 'FAIL' in line or 'Error' in line or 'Traceback' in line]
+                report.append('%s: FAILED\n%s' % (test, '\n'.join(failed_lines[-15:]) or output[-1500:]))
+                return False, '\n'.join(report)
+            return True, '\n'.join(report)
+    except RuntimeError as error:
+        return False, str(error)
     finally:
-        # The venv's python.exe is a launcher: killing it alone leaves the real server holding the port
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(server.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        server_log.close()
         shutil.rmtree(data_dir, ignore_errors=True)  # a temporary folder this function made
 
 

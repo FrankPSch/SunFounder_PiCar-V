@@ -18,6 +18,7 @@ import time
 import wave
 
 from . import alsa, features, voice_cache
+from .sim import hardware
 
 PLAYBACK_RATE = 48000
 SAMPLE_WIDTH = 2
@@ -80,7 +81,10 @@ def say(text, language='en'):
         speaking.set()
         try:
             clips = natural_clips(text, language)
-            _play(_recorded(clips) if clips else _espeak(text, language))
+            if hardware.ACTIVE:
+                hardware.spoken(text, language, 'natural' if clips else 'espeak')
+            else:
+                _play(_recorded(clips) if clips else _espeak(text, language))
             time.sleep(ECHO_S)
         except (OSError, subprocess.SubprocessError, wave.Error, EOFError) as error:
             print('speaker: say failed: %s' % error)
@@ -91,7 +95,7 @@ def say(text, language='en'):
 def describe():
     recordings = {language: len(os.listdir(os.path.join(CACHE_DIR, language))) for language in ('de', 'en')
                   if os.path.isdir(os.path.join(CACHE_DIR, language))}
-    voice = 'natural' if features.enabled('natural_voice') and recordings else 'espeak'
+    voice = 'natural' if features.enabled('natural_voice') and any(recordings.values()) else 'espeak'  # empty folders: espeak
     return {'voice': voice, 'recordings': recordings}
 
 

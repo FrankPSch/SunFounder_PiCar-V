@@ -14,6 +14,7 @@ import time
 
 from . import features
 from .car import car, SIM
+from .sim import hardware
 
 SAMPLE_SECONDS = 5
 HISTORY_SAMPLES = 24 * 3600 // SAMPLE_SECONDS
@@ -167,9 +168,7 @@ def sample(include_slow=False):
     for name, reader in SLOW_READERS.items():
         snapshot[name] = reader() if include_slow else latest.get(name)
     if SIM:
-        snapshot['cpu_temp_c'] = snapshot['cpu_temp_c'] or 48.0
-        snapshot['throttled'] = snapshot['throttled'] or {'flags': '0x0', 'undervoltage_now': False,
-                                                          'throttled_now': False, 'undervoltage_since_boot': False}
+        snapshot.update(hardware.readings())   # the twin's sensors instead of the PC's
     snapshot['warnings'] = warnings_for(snapshot)
     return snapshot
 

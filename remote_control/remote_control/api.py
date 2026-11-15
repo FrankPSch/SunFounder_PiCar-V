@@ -19,8 +19,7 @@ from .tracker import tracker
 
 
 telemetry.start(tracker.describe)
-if not SIM:
-    speaker.say_later(spoken_texts.STARTUP[1], spoken_texts.STARTUP[0])  # every start: boot, restart, update
+speaker.say_later(spoken_texts.STARTUP[1], spoken_texts.STARTUP[0])  # every start: boot, restart, update (the twin writes it down)
 
 
 def _apply_auto_update(name, is_on):

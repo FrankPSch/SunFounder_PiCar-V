@@ -2,8 +2,11 @@
 """Simulation checks for the second feature round: toggles, exclusivity, media, QR, markers/rooms, treasure hunt, audio status."""
 import ast
 import json
+import math
 import re
 import os
+import struct
+import wave
 import sys
 import time
 import urllib.error
@@ -135,11 +138,31 @@ s = wait_for(lambda c: c['tracker']['treasure']['score'] >= 1, 25)
 check('treasure found (red sim ball) -> score', s['tracker']['treasure']['score'] >= 1, True)
 cmd('feature', name='treasure_hunt', on=False)
 
-# microphone: no arecord on the PC -> reported, not crashed
+# digital twin (remote_control/sim/hardware.py): microphone, speaker, sensors, file owners in the twin's picar-data
+DATA = os.environ['PICAR_DATA']
+cmd('setting', name='mic_device', value='plughw:CARD=Missing,DEV=0')
 cmd('feature', name='sound_level', on=True)
 s = wait_for(lambda c: c['audio']['error'], 6)
-check('mic error reported (no arecord in sim)', bool(s['audio']['error']), True)
+check('mic error reported (no arecord for a real device)', bool(s['audio']['error']), True)
+cmd('setting', name='mic_device', value='')
+os.makedirs(os.path.join(DATA, 'twin_microphone'), exist_ok=True)
+with wave.open(os.path.join(DATA, 'twin_microphone', 'loud.wav'), 'wb') as loud:
+    loud.setnchannels(1); loud.setsampwidth(2); loud.setframerate(16000)
+    loud.writeframes(struct.pack('<16000h', *(int(16000 * math.sin(2 * math.pi * 440 * index / 16000)) for index in range(16000))))
+s = wait_for(lambda c: (c['audio']['level_dbfs'] or -200) > -20, 8)
+check('twin microphone: a loud recording is heard', (s['audio']['device'], (s['audio']['level_dbfs'] or -200) > -20), ('twin', True))
 cmd('feature', name='sound_level', on=False)
+with open(os.path.join(DATA, 'twin_speaker.jsonl'), encoding='utf-8') as speaker_file:
+    said = [json.loads(line)['text'] for line in speaker_file]
+check('twin speaker: the start message was said', 'Ich bin bereit.' in said or any('bereit' in text for text in said), True)
+with open(os.path.join(DATA, 'twin_hardware.json'), 'w') as hardware_file:
+    json.dump({'throttled': {'flags': '0x50005', 'undervoltage_now': True, 'throttled_now': True, 'undervoltage_since_boot': True}}, hardware_file)
+s = wait_for(lambda c: any('UNDER-VOLTAGE' in warning for warning in c['telemetry'].get('warnings', [])), 12)
+check('twin sensors: under-voltage -> warning', any('UNDER-VOLTAGE' in warning for warning in s['telemetry'].get('warnings', [])), True)
+os.remove(os.path.join(DATA, 'twin_hardware.json'))
+with open(os.path.join(DATA, 'twin_owners.json')) as owners_file:
+    check('twin car data: features.json owned by root as on the car', json.load(owners_file).get('features.json'), 'root')
+check('twin car data: the switch the car no longer knows is dropped', 'mbrola_voice' in [f['name'] for f in state()['features']], False)
 
 # pause_voice_commands: no conversation runs in the sim, so nothing is paused; the switch only flips
 s = cmd('feature', name='pause_voice_commands', on=True)
@@ -181,9 +204,9 @@ check('dashboard charts draw recorded columns', (chart_columns, all(column in hi
       (['cpu_temp_c', 'wifi_dbm', 'mem_used_pct', 'undervoltage'], True))
 check('dashboard has the four chart canvases', all('id="chart-%s"' % name in dashboard_html for name in ('temp', 'wifi', 'ram', 'power')), True)
 
-# natural_voice: no recordings in the simulation's data folder -> espeak-ng either way
+# natural_voice: the twin's voice cache folders are empty -> espeak-ng either way
 s = cmd('feature', name='natural_voice', on=True)
-check('natural_voice on, espeak without recordings (sim)', (enabled(s, 'natural_voice'), s['speaker']), (True, {'voice': 'espeak', 'recordings': {}}))
+check('natural_voice on, espeak without recordings (sim)', (enabled(s, 'natural_voice'), s['speaker']), (True, {'voice': 'espeak', 'recordings': {'de': 0, 'en': 0}}))
 s = cmd('feature', name='natural_voice', on=False)
 check('natural_voice off', (enabled(s, 'natural_voice'), s['speaker']['voice']), (False, 'espeak'))
 cmd('feature', name='natural_voice', on=True)

@@ -75,7 +75,8 @@ class SayTest(unittest.TestCase):
         for patch in (mock.patch.object(speaker, 'CACHE_DIR', self.cache),
                       mock.patch.object(speaker, '_play', lambda audio: self.played.append(len(audio))),
                       mock.patch.object(speaker, '_espeak', lambda text, language: b'espeak:' + text.encode('utf-8')),
-                      mock.patch.object(speaker, 'ECHO_S', 0)):
+                      mock.patch.object(speaker, 'ECHO_S', 0),
+                      mock.patch.object(speaker.hardware, 'ACTIVE', False)):   # the car's sound path, not the twin speaker
             patch.start()
             self.addCleanup(patch.stop)
 

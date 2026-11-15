@@ -2,6 +2,8 @@
 import re
 import subprocess
 
+from .sim import hardware
+
 INTERNAL_AUDIO_CARDS = ('Headphones', 'vc4hdmi')
 LIST_TIMEOUT_S = 5
 # Capture gain set before each recording start, by ALSA card name:
@@ -11,6 +13,8 @@ MIC_MIXERS = {'Device': ('Mic', '100%'),      # old USB mic: capture volume boot
 
 def usb_device(list_tool):
     '''First USB card as "plughw:CARD=..,DEV=..": list_tool 'arecord' = microphone, 'aplay' = speaker. None if there is none.'''
+    if hardware.ACTIVE:
+        return hardware.DEVICE
     try:
         listing = subprocess.run([list_tool, '-l'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, universal_newlines=True,
                                  timeout=LIST_TIMEOUT_S).stdout

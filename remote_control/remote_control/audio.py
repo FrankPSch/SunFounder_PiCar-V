@@ -19,6 +19,7 @@ import wave
 from . import alsa, events, features, learning, listeners, vocabulary, voice_protocol, word_recognizer
 from .speech_level import SAMPLE_WIDTH, level_dbfs
 from .conversation import conversation
+from .sim import hardware
 
 SAMPLE_RATE = voice_protocol.UTTERANCE_RATE
 CHUNK_BYTES = SAMPLE_RATE // 10 * SAMPLE_WIDTH
@@ -79,7 +80,7 @@ class Microphone(object):
     def _record(self, device):
         command = ['arecord', '-q', '-D', device, '-f', 'S16_LE', '-r', str(SAMPLE_RATE), '-c', '1', '-t', 'raw']
         try:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = hardware.MicrophoneProcess(SAMPLE_RATE) if device == hardware.DEVICE else subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except OSError as error:
             self.status.update(running=False, error='arecord: %s' % error)
             time.sleep(NO_DEVICE_RETRY_S)
