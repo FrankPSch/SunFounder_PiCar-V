@@ -37,6 +37,12 @@ def _switch_on(spoken):
     return switch is None or features.enabled(switch)
 
 
+def commands_paused():
+    '''pause_voice_commands: during a conversation the commands ("links", "kamera hoch") wait; stop and the claude
+    phrases stay live. The conversation ends with "danke claude" or after conversation.IDLE_END_S of silence.'''
+    return features.enabled('pause_voice_commands') and conversation.active()
+
+
 class WordRecognizer(object):
     def __init__(self, model_dirs):
         self.model_dirs = model_dirs
@@ -131,7 +137,7 @@ class WordRecognizer(object):
             conversation.start(more_words_seconds)
             return
         if spoken and spoken.kind in (Kind.COMMAND, Kind.SYSTEM) and _switch_on(spoken) and not in_sentence and not muted:
-            if not (phrase in vocabulary.NOT_IN_CONVERSATION and conversation.active()):
+            if not (phrase in vocabulary.NOT_IN_CONVERSATION and conversation.active()) and not (spoken.kind == Kind.COMMAND and commands_paused()):
                 self._run(spoken, language, text)
             return
         if any(word in text.split() for word in self._stop_words(language)) and (not in_sentence or car.drive_direction):
@@ -150,4 +156,4 @@ class WordRecognizer(object):
         self._last_command = (None, 0.0, None)
 
     def describe(self):
-        return dict(self.status, phrases={language: sorted(vocabulary.phrases(language)) for language in vocabulary.LANGUAGES})
+        return dict(self.status, commands_paused=commands_paused(), phrases={language: sorted(vocabulary.phrases(language)) for language in vocabulary.LANGUAGES})

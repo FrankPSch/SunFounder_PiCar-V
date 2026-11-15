@@ -139,5 +139,13 @@ s = wait_for(lambda c: c['audio']['error'], 6)
 check('mic error reported (no arecord in sim)', bool(s['audio']['error']), True)
 cmd('feature', name='sound_level', on=False)
 
+# pause_voice_commands: no conversation runs in the sim, so nothing is paused; the switch only flips
+s = cmd('feature', name='pause_voice_commands', on=True)
+check('pause_voice_commands on', enabled(s, 'pause_voice_commands'), True)
+check('no conversation -> commands not paused', state()['audio']['commands_paused'], False)
+s = cmd('feature', name='pause_voice_commands', on=False)
+check('pause_voice_commands off', (enabled(s, 'pause_voice_commands'), state()['audio']['commands_paused']), (False, False))
+check('pause_voice_commands does not drive', state()['car']['drive_direction'], 0)
+
 check('events logged', len(state()['events']) >= 5, True)
 print('RESULT:', 'ALL PASS' if not failures else 'FAILED: %s' % failures)

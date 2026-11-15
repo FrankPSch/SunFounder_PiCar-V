@@ -39,6 +39,7 @@ FEATURES = {
     'stop_word':          (False, 'Saying "stop" stops the motors (Vosk, offline)'),
     'voice_commands':     (False, 'Spoken commands like "links", "kamera hoch" (Vosk, offline)'),
     'claude_voice':       (False, 'Saying "hey Claude" starts a conversation'),
+    'pause_voice_commands': (False, 'No spoken commands while talking to Claude (stop stays live); "danke claude" ends the talk'),
     # output
     'voice_prompts':      (False, 'Speak events with espeak-ng (needs a speaker)'),
     'push_notifications': (False, 'Send alarms to ntfy.sh (needs ntfy_topic in settings.json)'),

@@ -21,6 +21,7 @@ from remote_control.car import car, STEER_MAX, STEER_MIN  # noqa: E402
 from remote_control.tracker import tracker  # noqa: E402
 
 conversation = conversation_module.conversation
+real_end_conversation = commands.end_conversation  # CommandTest mocks it
 START_SPEED, START_CAM_STEP = 40, 2
 
 # Spoken phrase -> what the car does, checked on car.state() or on the called function.
@@ -42,6 +43,7 @@ SPOKEN = {
         'stopp': ('drive_direction', 0), 'halt': ('drive_direction', 0), 'anhalten': ('drive_direction', 0),
         'claude starten': ('calls', ['server start']), 'claude beenden': ('calls', ['server stop']), 'claude stoppen': ('calls', ['server stop']),
         'hey claude': ('calls', ['conversation start']), 'hallo claude': ('calls', ['conversation start']),
+        'danke claude': ('calls', ['conversation end']),
         'hilfe': ('calls', ['help']),
         'befehle lernen': ('calls', ['learn start de']), 'lernen beenden': ('calls', ['learn end']),
     },
@@ -59,6 +61,7 @@ SPOKEN = {
         'stop': ('drive_direction', 0), 'halt': ('drive_direction', 0),
         'start claude': ('calls', ['server start']), 'stop claude': ('calls', ['server stop']),
         'hey claude': ('calls', ['conversation start']), 'hello claude': ('calls', ['conversation start']),
+        'thank you claude': ('calls', ['conversation end']),
         'help': ('calls', ['help']),
         'learn commands': ('calls', ['learn start en']), 'stop learning': ('calls', ['learn end']),
     },
@@ -127,7 +130,7 @@ def reset_voice_state():
 class CommandTest(unittest.TestCase):
     def setUp(self):
         features.set_enabled('watchdog', False)
-        for name in ('voice_commands', 'claude_voice', 'ball_tracking', 'face_tracking', 'treasure_hunt', 'qr_reader'):
+        for name in ('voice_commands', 'claude_voice', 'ball_tracking', 'face_tracking', 'treasure_hunt', 'qr_reader', 'pause_voice_commands'):
             features.set_enabled(name, False)
         features.set_enabled('voice_commands', True)
         features.set_enabled('claude_voice', True)
@@ -150,6 +153,7 @@ class CommandTest(unittest.TestCase):
             mock.patch.object(tracker, 'set_animal', record('set_animal')),
             mock.patch.object(tracker, 'next_treasure', record('next_treasure')),
             mock.patch.object(commands, 'switch_voice_server', lambda action: self.calls.append('server ' + action)),
+            mock.patch.object(commands, 'end_conversation', record('conversation end')),
             mock.patch.object(conversation, 'start', lambda *args: self.calls.append('conversation start')),
             mock.patch.object(conversation, 'active', lambda: False),
         ]
@@ -259,6 +263,38 @@ class SpokenPhraseTest(CommandTest):
         with mock.patch.object(conversation, 'active', lambda: True):
             hear('de', 'vorwärts')
         self.assertEqual(car.state()['drive_direction'], 1)
+
+    def test_pause_voice_commands_in_a_conversation(self):
+        '''Switch pause_voice_commands: in a conversation commands wait, stop and the claude phrases stay live.'''
+        features.set_enabled('pause_voice_commands', True)
+        with mock.patch.object(conversation, 'active', lambda: True):
+            for text in ('links', 'kamera hoch', 'vorwärts', 'foto'):
+                hear('de', text)
+            self.assertEqual((car.state()['steer_angle'], car.state()['tilt_ticks'], car.state()['drive_direction']), (90, 0, 0))
+            hear('de', 'claude beenden')
+            hear('de', 'danke claude')
+            self.assertEqual(self.calls, ['server stop', 'conversation end'])
+            car.drive(1)
+            hear('de', 'stopp')
+            self.assertEqual(car.state()['drive_direction'], 0)
+
+    def test_commands_act_again_after_the_conversation(self):
+        features.set_enabled('pause_voice_commands', True)
+        hear('de', 'links')
+        self.assertEqual(car.state()['steer_angle'], 70)
+
+    def test_pause_voice_commands_off_commands_act_in_a_conversation(self):
+        with mock.patch.object(conversation, 'active', lambda: True):
+            hear('de', 'links')
+        self.assertEqual(car.state()['steer_angle'], 70)
+
+    def test_danke_claude_ends_the_conversation_only_with_the_switch_on(self):
+        with mock.patch.object(conversation, 'end_if_active', lambda: self.calls.append('end')):
+            real_end_conversation()
+            self.assertEqual(self.calls, [])
+            features.set_enabled('pause_voice_commands', True)
+            real_end_conversation()
+        self.assertEqual(self.calls, ['end'])
 
     def test_same_command_from_both_languages_runs_once(self):
         hear('de', 'links')

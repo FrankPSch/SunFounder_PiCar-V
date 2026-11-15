@@ -59,6 +59,13 @@ def switch_voice_server(action):
     threading.Thread(target=_switch_voice_server, args=(action,), name='voice-server-' + action, daemon=True).start()
 
 
+def end_conversation():
+    '''"danke claude" (switch pause_voice_commands): the conversation ends now and the spoken commands act again.'''
+    if features.enabled('pause_voice_commands'):
+        from .conversation import conversation
+        conversation.end_if_active()
+
+
 def _switch_voice_server(action):
     problem = voice_link.switch_voice_server(action)
     if problem:
@@ -94,6 +101,7 @@ ACTIONS = {
     'room_cancel':  Action(lambda args: rooms.cancel()),
     'treasure_next': Action(lambda args: tracker.next_treasure()),
     'voice_server': Action(lambda args: switch_voice_server(args['action']), web=False),
+    'conversation_end': Action(lambda args: end_conversation(), web=False),
     'help':         Action(lambda args: speak_help(args['language']), web=False),
     'learn':        Action(_learn),
 }

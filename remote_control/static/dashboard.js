@@ -286,6 +286,7 @@ function renderExtras(state) {
     + (audio.heard ? ` · heard "${audio.heard}" ${audio.heard_time}` : '') + ` · claps ${audio.claps} · alarms ${audio.alarms}`
     + (audio.vosk_model ? '' : ' · vosk model missing') + (audio.error ? ' · ' + audio.error : '')
     + (audio.conversation && audio.conversation.state !== 'off' ? ` · Claude ${audio.conversation.state} ${audio.conversation.seconds_left} s` : '')
+    + (audio.commands_paused ? ' · commands paused' : '')
     + (audio.conversation && audio.conversation.error ? ` · Claude: ${audio.conversation.error}` : '');
 
   $('#events').innerHTML = state.events.slice().reverse().map((e) => `<div><small>${e.time}</small> <b>${e.source}</b> ${escapeHtml(e.text)}</div>`).join('')
