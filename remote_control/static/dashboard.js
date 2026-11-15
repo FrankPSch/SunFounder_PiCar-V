@@ -77,6 +77,9 @@ document.querySelectorAll('.stepper').forEach((stepper) => {
   if (slider) slider.addEventListener('change', () => { send(cmd, { value: +slider.value }); slider.blur(); });
 });
 
+// dashboard_pause_switch: the pause switch next to the voice switches, shown only while that switch is on
+$('[data-feature="voice_commands"]').closest('.track-row').insertAdjacentHTML('beforeend', '<label class="switch" id="pause-switch" hidden'
+  + ' title="No spoken commands while talking to Claude (stop stays live)"><input type="checkbox" data-feature="pause_voice_commands"> pause while talking</label>');
 document.querySelectorAll('[data-feature]').forEach((box) => box.addEventListener('change', () => send('feature', { name: box.dataset.feature, on: box.checked })));
 $('#track-color').addEventListener('change', (event) => { send('track_color', { name: event.target.value }); event.target.blur(); });
 $('#teach').addEventListener('click', () => send('track_teach'));
@@ -177,6 +180,7 @@ function renderFeatures(featureList) {
     box.querySelector(`[data-feature-row="${f.name}"]`).checked = f.on;
     document.querySelectorAll(`[data-feature="${f.name}"]`).forEach((input) => { input.checked = f.on; });
   }
+  $('#pause-switch').hidden = !featureList.some((f) => f.name === 'dashboard_pause_switch' && f.on);
 }
 
 function setIfIdle(input, value) { if (document.activeElement !== input) input.value = value; }

@@ -55,6 +55,7 @@ small, .muted { color: var(--muted); font-weight: 400; }
 .step-box { display: flex; flex-direction: column; gap: 4px; }
 .track-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .switch { display: flex; gap: 4px; align-items: center; }
+.switch[hidden] { display: none; }
 output { font-family: ui-monospace, Consolas, monospace; color: var(--accent); }
 details.group > summary { cursor: pointer; list-style: none; }
 details.group > summary h3 { display: inline; }

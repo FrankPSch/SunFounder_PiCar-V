@@ -147,5 +147,18 @@ s = cmd('feature', name='pause_voice_commands', on=False)
 check('pause_voice_commands off', (enabled(s, 'pause_voice_commands'), state()['audio']['commands_paused']), (False, False))
 check('pause_voice_commands does not drive', state()['car']['drive_direction'], 0)
 
+# dashboard_pause_switch: only shows the pause switch in the dashboard; it must not flip the pause itself
+with urllib.request.urlopen(BASE + '/static/dashboard.js') as response:
+    dashboard_js = response.read().decode('utf-8')
+check('dashboard.js builds the pause switch', ('data-feature="pause_voice_commands"' in dashboard_js, "'dashboard_pause_switch'" in dashboard_js), (True, True))
+s = cmd('feature', name='dashboard_pause_switch', on=True)
+check('dashboard_pause_switch on, pause stays off', (enabled(s, 'dashboard_pause_switch'), enabled(s, 'pause_voice_commands')), (True, False))
+s = cmd('feature', name='pause_voice_commands', on=True)
+check('pause toggles while shown', enabled(s, 'pause_voice_commands'), True)
+cmd('feature', name='pause_voice_commands', on=False)
+s = cmd('feature', name='dashboard_pause_switch', on=False)
+check('dashboard_pause_switch off', (enabled(s, 'dashboard_pause_switch'), enabled(s, 'pause_voice_commands')), (False, False))
+check('dashboard_pause_switch does not drive', state()['car']['drive_direction'], 0)
+
 check('events logged', len(state()['events']) >= 5, True)
 print('RESULT:', 'ALL PASS' if not failures else 'FAILED: %s' % failures)
