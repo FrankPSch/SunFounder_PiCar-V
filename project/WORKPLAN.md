@@ -12,9 +12,32 @@ From Frank's requests on 2026-11-15, in his words:
 
 ## Current task (chat)
 
-Collaboration of Claude voice, voice builder and chat, phases 1-4 (CLAUDE.md "How we work"): built 2026-11-15, waiting for
-Frank's push. Then: a real learning session while driving (S.learning.session driving with Frank's voice), and the open
+Collaboration of Claude voice, voice builder and chat, phases 1-4 (CLAUDE.md "How we work"): built and pushed 2026-11-15
+(deploy/20261115-074837-chat). Then: a real learning session while driving (S.learning.session driving with Frank's voice), and the open
 requirements in project/generated/REQUIREMENTS.md that need the real car or Frank's ear.
+
+## Architecture backlog (agreed with Frank in an ask loop, 2026-11-15; a list only, nothing built yet)
+
+Main goal Frank picked: **data and logs in order**. Each item is one push, same behaviour, tests green between steps; a plan for Frank's OK before each.
+Order = suggested sequence (the earlier ones make the later ones smaller).
+
+| # | Area | Item | What changes | Measured on 2026-11-15 |
+|---|---|---|---|---|
+| 1 | PC | **One `car_ssh.py`** | `run`, `run_script(bytes)`, `copy_tar`, `is_on`; key, host, timeouts only in `pc_settings`; a test fails if another module calls ssh | ssh built in 6 places (car_facts, car_tunnel ×2, deploy_check, prerender_voice ×2, release) |
+| 2 | Data | **PC voice folder by kind** | `voice\data` (wishes, recordings, results: Frank's, back up), `voice\logs`, `voice\generated` (rebuildable: status, catalog, coverage), `voice\runtime` (env, simenv, models, piper, builds, repo, tmp); paths only in `pc_settings.py`; leftover `simdata_*` cleaned | everything flat in `voice\`, 3 leftover simdata folders, scripts gpu.py / measure.py among data |
+| 3 | Data | **Car data written as pi** | data files created with owner pi (or the service runs as pi with gpio/audio groups); one fix of the existing files | features.json, settings.json, db.sqlite3, media/ owned by root |
+| 4 | Config | **One config file per side** | car: one JSON with sections features / settings / calibration, written atomically, with a schema version; PC: `pc_settings.py` the only source, copies replaced (e.g. `voice_check.CAR_DATA_DIR`) and checked by a test | car: features.json + settings.json + plain `calibration` file |
+| 5 | Data | **Disk warning, no deleting** | dashboard and Claude voice warn when the car's disk passes a threshold; nothing is deleted automatically | picar-data 585 MB (media 367, models 182, voice_cache 33), journal 224 MB, 51 GB free |
+| 6 | Tests | **Wait-for, not sleep** | every timing check waits for a condition with a timeout; a check forbids a bare sleep before a check | 2 flaky sim checks fixed 2026-11-15 (0859e64) |
+| 7 | Tests | **Sim checks as unittest** | sim_test*.py become unittest cases named after requirement ids, so evidence and failures line up | sim suites are scripts with check() |
+| 8 | PC | **One voice tool registry** | `voice_tools.py`: name, description, schema, handler, side-effect level (read / car / build / deploy); claude_chat and voice_server both read it; a test checks every tool is complete | schemas in claude_chat.py, handlers in voice_server._run_tool |
+| 9 | PC | **feature_builder in three** | `sim_runner.py` (sim car, suites, retries; also run_tests), `build_checks.py` (rules, phrase meanings, deploy summary), `feature_builder.py` (wish state machine only) | 396 lines, 6 jobs |
+| 10 | Car | **One service list** | one startup module starts and stops the services in a fixed order; each thread reports alive / last error in /api/state and the dashboard | 15 threads started in 10 modules, singletons built on import |
+| 11 | Car | **/api/state in sections** | a registry of state sections; car and tracker every poll, telemetry / media / rooms / settings on change or every few seconds | one answer from 9 modules on every poll |
+| 12 | Car | **Detector registry** | one small module per detector (switch, `detect(frame)`); tracker.py keeps the camera loop and dispatch; new vision wishes add a file | tracker.py 306 lines: 6 detectors + stuck + treasure + follow |
+| 13 | Car | **One web UI** | calibration becomes a dashboard section; the old SunFounder pages (views.py home/run/cali) are commented out after a check | two UIs |
+
+Not chosen (Frank, 2026-11-15): automatic deleting of old data (warn only); push instead of poll; keeping both UIs; faster parallel push tests.
 
 ## Open decisions for Frank
 
