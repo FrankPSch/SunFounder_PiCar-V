@@ -206,6 +206,15 @@ class SpokenPhraseTest(CommandTest):
             car.set_cam(30, -30)
             car.set_steer(STEER_MAX)
 
+    def test_reply_names_the_command(self):
+        said = []
+        features.set_enabled('voice_prompts', True)
+        self.addCleanup(features.set_enabled, 'voice_prompts', False)
+        with mock.patch.object(speaker, 'say_later', lambda text, language='en': said.append(text)):
+            hear('de', 'mitte')
+            hear('de', 'kamera links')
+        self.assertEqual(said, ['camera center', 'camera left'])
+
     def test_noise_word_before_a_phrase(self):
         '''Room noise heard as a grammar word in front: the phrase still counts, unless it drives (2026-11-15).'''
         hear('de', 'oben claude starten')
@@ -347,7 +356,7 @@ class HelpTest(unittest.TestCase):
 class ClaudeCommandTest(CommandTest):
     def test_claude_gets_no_command_that_moves(self):
         names = {name for name, _ in commands.for_claude()}
-        self.assertTrue({'photo', 'camera_left', 'center', 'stop', 'follow_ball', 'help'} <= names)
+        self.assertTrue({'photo', 'camera_left', 'camera_center', 'stop', 'follow_ball', 'help'} <= names)
         self.assertFalse({'forward', 'back', 'hey_claude', 'claude_start', 'claude_stop'} & names)
 
     def test_claude_may_take_a_photo(self):
