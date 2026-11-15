@@ -1,6 +1,7 @@
 '''Every feature wish spoken to Claude on the car, kept for good, so a chat on the PC can follow them:
   <voice dir>/wishes.jsonl            one line per step of a wish (append only, the data)
-  project/generated/WISHES.md          every wish in its latest state, newest first, made from it after each step
+  project/generated/REQUIREMENTS.md    section "W Spoken wishes": every wish in its latest state (requirements_report.py),
+                                       rebuilt after each step through on_change
 Steps (feature_builder.Builder): proposed, building, built, failed, deploying, deployed, deploy_failed, and dropped
 (a new wish replaced one still waiting for "go").'''
 import json
@@ -10,7 +11,6 @@ import time
 import uuid
 
 WISHES_FILE = 'wishes.jsonl'
-MARKDOWN_FILE = 'WISHES.md'       # next to the data unless a path is given
 STEP_FIELDS = ('title', 'understanding', 'options', 'language', 'option', 'branch', 'feature', 'detail')
 
 
@@ -20,9 +20,9 @@ def new_id():
 
 
 class WishList(object):
-    def __init__(self, folder, markdown_path=None):
+    def __init__(self, folder, on_change=None):
         self.folder = folder
-        self.markdown_path = markdown_path or os.path.join(folder, MARKDOWN_FILE)
+        self._on_change = on_change    # called after each step, e.g. to rebuild REQUIREMENTS.md
         self._lock = threading.Lock()
 
     def record(self, wish_id, state, **fields):
@@ -34,9 +34,8 @@ class WishList(object):
             os.makedirs(self.folder, exist_ok=True)
             with open(os.path.join(self.folder, WISHES_FILE), 'a', encoding='utf-8') as wishes:
                 wishes.write(json.dumps(line, ensure_ascii=False) + '\n')
-            os.makedirs(os.path.dirname(self.markdown_path), exist_ok=True)
-            with open(self.markdown_path, 'w', encoding='utf-8') as markdown:
-                markdown.write(self.markdown())
+        if self._on_change:
+            self._on_change()
 
     def wishes(self):
         '''{id: wish} in the order they were first spoken: the latest value of every field, and the history of states.'''
@@ -52,10 +51,11 @@ class WishList(object):
         return wishes
 
     def markdown(self):
-        lines = ['# PiCar wishes', '', 'Feature wishes spoken to Claude on the car, newest first. Written by tools/feature_builder.py;',
-                 'the steps are in wishes.jsonl. "go" + option builds a wish, "deploy" installs it on the car.']
+        '''The section "W Spoken wishes" of REQUIREMENTS.md: newest first.'''
+        lines = ['## W Spoken wishes', '', 'Feature wishes spoken to Claude on the car, newest first. Written by tools/feature_builder.py;',
+                 'the steps are in wishes.jsonl. "go" + option builds a wish, "deploy" installs it on the car, "for_chat" goes to the chat.']
         for wish_id, wish in reversed(list(self.wishes().items())):
-            lines += ['', '## %s: %s' % (wish.get('title', wish_id), wish['state']), '',
+            lines += ['', '### %s: %s' % (wish.get('title', wish_id), wish['state']), '',
                       '- Spoken %s, last step %s (id %s)' % (wish['history'][0][0], wish['history'][-1][0], wish_id)]
             if wish.get('understanding'):
                 lines.append('- Understood: %s' % wish['understanding'])

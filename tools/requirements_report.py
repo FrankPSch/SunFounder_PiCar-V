@@ -1,5 +1,5 @@
 '''Requirements = tests, put together: the catalog (written by tests/test_requirements.py), the evidence of the last test
-run, the post-deploy checks on the real car and Frank's learning sessions. Writes project/generated/REQUIREMENTS.md and
+run, the post-deploy checks on the real car and Frank's learning sessions. Writes project/generated/REQUIREMENTS.md (with the spoken wishes as section W) and
 <voice dir>/requirements_status.json (for Claude voice), and returns the gaps:
   missing   a requirement checked "auto" without a passing test: tools/run_tests.py fails
   unknown   evidence for an id that is not in the catalog (a typo, or a requirement that was removed): fails too
@@ -10,6 +10,7 @@ import os
 import sys
 
 import pc_settings
+import wish_list
 from remote_control import requirements
 
 CATALOG_FILE = os.path.join(pc_settings.VOICE_DIR, 'requirements_catalog.json')
@@ -73,6 +74,7 @@ def _write_markdown(rows, unknown):
              '**%d requirements: %d ok, %d partial, %d open.**' % (len(rows), counts['ok'], counts['partial'], counts['open'])]
     if unknown:
         lines += ['', '**Evidence for unknown ids:** ' + ', '.join(unknown)]
+    lines += ['', wish_list.WishList(pc_settings.WISHES_DIR).markdown().rstrip('\n')]  # first: what Frank asked for
     for level, level_name in LEVELS.items():
         level_rows = [row for row in rows if row['id'].startswith(level + '.')]
         categories = collections.OrderedDict((row['id'].split('.')[1], None) for row in level_rows)
@@ -86,6 +88,12 @@ def _write_markdown(rows, unknown):
     os.makedirs(os.path.dirname(MARKDOWN_FILE), exist_ok=True)
     with open(MARKDOWN_FILE, 'w', encoding='utf-8') as markdown:
         markdown.write('\n'.join(lines) + '\n')
+
+
+def rebuild_if_possible():
+    '''After a wish step: REQUIREMENTS.md again, once tools/run_tests.py has written the catalog.'''
+    if os.path.isfile(CATALOG_FILE):
+        build()
 
 
 def summary(rows=None):

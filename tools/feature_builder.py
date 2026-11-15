@@ -28,6 +28,7 @@ import car_facts
 import integration_lock
 import pc_settings
 import release
+import requirements_report
 import wish_list
 
 WORK_DIR = os.environ.get('PICAR_WORK_DIR', pc_settings.VOICE_DIR)
@@ -249,7 +250,7 @@ def sim_tests_pass(worktree, log):
 class Builder(object):
     def __init__(self, announce, wishes=None):
         self._announce = announce  # announce(language, text): spoken by the car at its next poll
-        self._wishes = wishes or wish_list.WishList(pc_settings.WISHES_DIR, os.path.join(pc_settings.REPO, 'project', 'generated', 'WISHES.md'))
+        self._wishes = wishes or wish_list.WishList(pc_settings.WISHES_DIR, requirements_report.rebuild_if_possible)
         self._lock = threading.Lock()
         self.state = 'idle'
         self.request = None        # dict: id, title, understanding, options, language, option, feature, branch, worktree, log

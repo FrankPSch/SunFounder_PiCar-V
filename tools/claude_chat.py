@@ -75,7 +75,7 @@ TOOLS = [
            'reason': {'type': 'string', 'description': 'one sentence why the chat must do it'}}, ['title', 'understanding', 'reason']),
     _tool('project_status', 'The project now: version on the car, open wishes, voice builds not reviewed, untested requirements.', {}, []),
     _tool('read_doc', 'Read a project document, whole or only the lines containing search (empty search = all): '
-          'WISHES, REQUIREMENTS, CHANGES, CAR_FACTS, VOICE_COMMANDS, WORKPLAN, SETUP_LOG.',
+          'REQUIREMENTS (tests by category, and the spoken wishes under W), CHANGES, CAR_FACTS, VOICE_COMMANDS, WORKPLAN, SETUP_LOG.',
           {'name': {'type': 'string'}, 'search': {'type': 'string'}}, ['name', 'search']),
     _tool('rollback_version', 'Put the previous version back on the car. Only after the owner asked for it and confirmed once.', {}, []),
 ]

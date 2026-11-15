@@ -1,8 +1,8 @@
 '''The generated project documents in project/generated/ (not in git, so voice builds and the chat never conflict over
 them), and the short status Claude voice reads:
-  WISHES.md          every spoken wish (wish_list.py)          CHANGES.md   git history: source, deploy tags, reviews
+  REQUIREMENTS.md    requirements = tests, and the spoken wishes as section W (requirements_report.py)
+  CHANGES.md         git history: source, deploy tags, reviews
   CAR_FACTS.md       measured on the car (car_facts.py)        VOICE_COMMANDS.md  every spoken command
-  REQUIREMENTS.md    requirements = tests (requirements_report.py, refreshed with the newest real-car evidence)
 Rebuilt by the voice server at start, after every deploy, and by hand:  python tools/project_docs.py'''
 import os
 import subprocess
@@ -15,7 +15,7 @@ import voice_check
 import wish_list
 
 GENERATED = os.path.join(pc_settings.REPO, 'project', 'generated')
-DOCUMENTS = ('WISHES', 'REQUIREMENTS', 'CHANGES', 'CAR_FACTS', 'VOICE_COMMANDS', 'WORKPLAN', 'SETUP_LOG')
+DOCUMENTS = ('REQUIREMENTS', 'CHANGES', 'CAR_FACTS', 'VOICE_COMMANDS', 'WORKPLAN', 'SETUP_LOG')
 HAND_WRITTEN = {'WORKPLAN': os.path.join(pc_settings.REPO, 'project', 'WORKPLAN.md'), 'SETUP_LOG': os.path.join(pc_settings.REPO, 'project', 'SETUP_LOG.md')}
 CHANGES_SHOWN = 60
 OPEN_WISH_STATES = ('proposed', 'building', 'built', 'for_chat', 'failed', 'deploying', 'deploy_failed')
@@ -26,7 +26,7 @@ def document_path(name):
 
 
 def wishes():
-    return wish_list.WishList(pc_settings.WISHES_DIR, os.path.join(GENERATED, 'WISHES.md'))
+    return wish_list.WishList(pc_settings.WISHES_DIR)
 
 
 def changes():
@@ -70,7 +70,7 @@ def build(log=print):
     facts = car_facts.load()
     running = (facts or {}).get('commit', '').split(' ')[0]
     written = {'CHANGES': _changes_markdown(changes(), running), 'CAR_FACTS': _facts_markdown(facts),
-               'VOICE_COMMANDS': voice_check.checklist() + '\n', 'WISHES': wishes().markdown()}
+               'VOICE_COMMANDS': voice_check.checklist() + '\n'}
     for name, text in written.items():
         with open(document_path(name), 'w', encoding='utf-8') as document:
             document.write(text)

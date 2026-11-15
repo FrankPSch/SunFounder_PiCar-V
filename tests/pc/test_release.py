@@ -167,7 +167,9 @@ class DocumentsTest(unittest.TestCase):
     def setUp(self):
         folder = tempfile.mkdtemp(prefix='generated_')
         for patch in (mock.patch.object(project_docs, 'GENERATED', folder), mock.patch.object(pc_settings_module(), 'WISHES_DIR', folder),
-                      mock.patch.object(release, 'REVIEWS_FILE', os.path.join(folder, 'reviews.json'))):
+                      mock.patch.object(release, 'REVIEWS_FILE', os.path.join(folder, 'reviews.json')),
+                      mock.patch.object(requirements_report, 'MARKDOWN_FILE', os.path.join(folder, 'REQUIREMENTS.md')),
+                      mock.patch.object(requirements_report, 'STATUS_FILE', os.path.join(folder, 'requirements_status.json'))):
             patch.start()
             self.addCleanup(patch.stop)
         self.folder = folder
@@ -175,9 +177,13 @@ class DocumentsTest(unittest.TestCase):
     @requirements.shows(*[('S.docs.generated', variant) for variant in ('wishes', 'changes', 'car facts', 'voice commands', 'requirements')])
     def test_all_documents_are_built(self):
         project_docs.build(lambda text: None)
-        for name in ('WISHES', 'CHANGES', 'CAR_FACTS', 'VOICE_COMMANDS'):
+        for name in ('CHANGES', 'CAR_FACTS', 'VOICE_COMMANDS'):
             self.assertTrue(os.path.getsize(project_docs.document_path(name)) > 0, name)
         self.assertIn('| date | commit | source |', project_docs.read('CHANGES'))
+        wish_list.WishList(self.folder).record('w1', 'proposed', title='Hupe', understanding='Hupt', options=['kurz'], language='de')
+        project_docs.build(lambda text: None)
+        self.assertIn('### Hupe: proposed', project_docs.read('REQUIREMENTS', 'Hupe'))
+        self.assertIn('## W Spoken wishes', project_docs.read('REQUIREMENTS'))
 
     @requirements.shows(('C.project.read', 'documents'), ('C.project.read', 'status'))
     def test_claude_voice_reads_documents_and_status(self):
@@ -217,7 +223,7 @@ class VoiceServerTest(Folder):
         self.assertEqual(said, ['Neue Version vom Chat ist auf dem Auto: Natural voice'])
 
     def test_read_tools_are_offered(self):
-        for name, arguments in (('project_status', {}), ('read_doc', {'name': 'WISHES', 'search': ''}), ('rollback_version', {}),
+        for name, arguments in (('project_status', {}), ('read_doc', {'name': 'REQUIREMENTS', 'search': 'W '}), ('rollback_version', {}),
                                 ('deploy_feature', {'phrase_changes_confirmed': False})):
             self.assertTrue(voice_server.claude_chat.valid_tool_input(name, arguments), name)
 

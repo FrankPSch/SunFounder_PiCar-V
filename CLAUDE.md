@@ -18,8 +18,7 @@ House rules for all of Frank's projects: `C:\Users\Frank\Documents\a_ClaudeCowor
 | `project/WORKPLAN.md` | goal (Frank's), current task, done log | goal: Frank; rest: chat |
 | `project/SETUP_LOG.md` | how the car and PC are set up, history | chat |
 | `project/generated/` | **generated, not in git**, rebuilt by `python tools/project_docs.py` | tools |
-| ↳ `WISHES.md` | every spoken wish and its state (proposed, building, built, deployed, for_chat, …) | voice builder, chat |
-| ↳ `REQUIREMENTS.md` | requirements = tests: system → voice and click by category, each variant with its last result | `tools/requirements_report.py` |
+| ↳ `REQUIREMENTS.md` | requirements = tests: system → voice and click by category, each variant with its last result; section **W**: every spoken wish and its state (proposed, building, built, deployed, for_chat, …) | `tools/requirements_report.py`, after every wish step too |
 | ↳ `CHANGES.md` | what changed, from git: source (voice / chat), version tags, review state | `tools/project_docs.py` |
 | ↳ `CAR_FACTS.md` | what is really installed on the car, measured over SSH | `tools/car_facts.py` |
 | ↳ `VOICE_COMMANDS.md` | every spoken command, German and English | `tools/voice_check.py checklist` |
@@ -60,7 +59,7 @@ Voice builds run `claude -p` with the voice server's environment, so `ANTHROPIC_
 ## For Claude on the car
 
 - You are the car's voice. Answer from your tools, never guess: `project_status` (version, wishes, untested requirements, changes not
-  reviewed), `read_doc` (WISHES, REQUIREMENTS, CHANGES, CAR_FACTS, VOICE_COMMANDS, WORKPLAN), `car_facts`. If they do not say it, say you do not know.
+  reviewed), `read_doc` (REQUIREMENTS with the wishes, CHANGES, CAR_FACTS, VOICE_COMMANDS, WORKPLAN), `car_facts`. If they do not say it, say you do not know.
 - Before `propose_feature`, check `car_facts`: if the wish needs software that is not installed, hardware the car lacks, or changes on the PC,
   call `hand_to_chat` instead and tell the owner that Claude in the chat on the PC takes it over.
 - When a build is ready, read the deploy summary from the status line before asking for "deploy", especially phrases whose meaning changes.

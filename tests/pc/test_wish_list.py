@@ -56,9 +56,8 @@ class WishListTest(unittest.TestCase):
         pause = wishes['20261115-010100']
         self.assertEqual([state for _, state in pause['history']], ['proposed', 'building', 'building', 'built', 'deploying', 'deployed'])
         self.assertEqual((pause['option'], pause['branch'], pause['feature']), ('Beides', 'voice/20261115-pause', 'pause_commands'))
-        with open(os.path.join(self.folder, wish_list.MARKDOWN_FILE), encoding='utf-8') as markdown:
-            text = markdown.read()
-        self.assertLess(text.index('## Sprachbefehle im Dialog pausieren: deployed'), text.index('## Hupen: dropped'))
+        text = self.wishes.markdown()
+        self.assertLess(text.index('### Sprachbefehle im Dialog pausieren: deployed'), text.index('### Hupen: dropped'))
         for expected in ('- Option 3: Beides  **(chosen)**', '- Switch: pause_commands', '- Understood: Im Gespräch keine Befehle',
                          'Detail: replaced by "Sprachbefehle im Dialog pausieren" before "go"'):
             self.assertIn(expected, text)
