@@ -43,6 +43,8 @@ BUILD_TIMEOUT_S = 40 * 60
 FIX_ROUNDS = 2              # test failures go back to the builder this often
 LOCK_WAIT_S = 30 * 60       # a chat push takes a few minutes; longer means something hangs
 NOT_FEASIBLE = re.compile(r'^NOT FEASIBLE:\s*(.+)$', re.MULTILINE)
+SIM_SUITE = os.path.join('tests', 'sim')
+SIM_SUITE_TIMEOUT_S = 600
 SIM_TEST_TRIES = 3          # some checks depend on timing (ball tracking under load): one clean run of three counts
 SIM_PORT = 8790
 COMMIT_AUTHOR = ['-c', 'user.name=FrankPSch', '-c', 'user.email=frank.schikarski@googlemail.com']
@@ -75,13 +77,14 @@ Rules (a script checks them afterwards and rejects the build otherwise):
   expected effect to tests/test_commands.py. Every word must be in the Vosk vocabulary (German and English small models).
 - The code must run on the car with the packages it already has (see tools/install_extras.sh and the imports in
   remote_control/remote_control/) and in the PC simulation (PICAR_SIM=1, remote_control/remote_control/sim/).
-- Add checks for the new feature to tools/sim_test_features.py: switch it on and off through
-  POST /api/cmd {{"cmd": "feature", "name": ..., "on": ...}} and check what it does in the simulation.
-  The checks must not make the car drive.
+- Add a test for the new feature to tests/sim/test_sim_features.py (a method of class Features, numbered before
+  test_99, decorated @shows(('K.switch.<name>', 'on'), ('K.switch.<name>', 'off'))): switch it on and off with
+  self.cmd('feature', name=..., on=...) and check what it does in the simulation; wait with self.wait_until(...), never
+  time.sleep. The test must not make the car drive.
 - If the feature should show on the dashboard, use remote_control/static/dashboard.js and dashboard.css.
 - Keep the change small and follow the style of the code around it. Do not commit; the build server tests and commits.
 - Nothing can be installed on the car. If the chosen option needs software that CAR FACTS below does not show as
-  installed, hardware the car lacks, or changes outside remote_control/ and tools/sim_test_features.py, do not edit
+  installed, hardware the car lacks, or changes outside remote_control/ and tests/sim/test_sim_features.py, do not edit
   anything and end your answer with one line: NOT FEASIBLE: <one sentence why, in the owner's language ({language})>
 End your answer with one line: FEATURE <name of the new switch>
 
@@ -201,21 +204,18 @@ def _uses(worktree, name, feature):
 
 
 def run_sim_tests(worktree):
-    '''Both simulation suites against a fresh simulated car on a car-like picar-data folder (the twin).
-    Returns (passed, last lines of the output).'''
+    '''The simulation tests (tests/sim/) against a fresh simulated car on a car-like picar-data folder (the twin).
+    Returns (passed, a short report: the summary, or the failures).'''
     data_dir = twin.seed_car_data(tempfile.mkdtemp(prefix='simdata_', dir=WORK_DIR))
     try:
         with twin.SimCar(worktree, SIM_PORT, data_dir, SIM_PYTHON) as car:
-            report = []
-            for test in ('tools/sim_test.py', 'tools/sim_test_features.py'):
-                code, output = _run([SIM_PYTHON, test, car.url], cwd=worktree, timeout=300, env=car.env)
-                if code == 0 and 'ALL PASS' in output:
-                    report.append(test + ': ALL PASS')
-                    continue
-                failed_lines = [line for line in output.splitlines() if 'FAIL' in line or 'Error' in line or 'Traceback' in line]
-                report.append('%s: FAILED\n%s' % (test, '\n'.join(failed_lines[-15:]) or output[-1500:]))
-                return False, '\n'.join(report)
-            return True, '\n'.join(report)
+            code, output = _run([SIM_PYTHON, '-m', 'unittest', 'discover', '-s', SIM_SUITE], cwd=worktree, timeout=SIM_SUITE_TIMEOUT_S,
+                                env=dict(car.env, PICAR_SIM_URL=car.url))
+            summary = ' | '.join(line for line in output.splitlines() if line.startswith(('Ran ', 'OK', 'FAILED')))
+            if code == 0:
+                return True, 'tests/sim: ' + summary
+            failures = [line for line in output.splitlines() if line.startswith(('FAIL:', 'ERROR:', 'AssertionError', 'urllib.error'))]
+            return False, 'tests/sim: %s\n%s' % (summary, '\n'.join(failures[-15:]) or output[-1500:])
     except RuntimeError as error:
         return False, str(error)
     finally:

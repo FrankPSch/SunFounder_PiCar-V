@@ -1,7 +1,7 @@
 '''All PiCar tests in one command, each with the Python environment it needs (on the owner's PC):
   car unit tests  tests/          sim environment (Django, OpenCV)
   PC unit tests   tests/pc/       voice environment (Whisper, Piper, anthropic), echo mode: no API key used
-  sim suites      tools/sim_test.py, tools/sim_test_features.py against a simulated car server (one clean run of three)
+  sim tests       tests/sim/ against the simulated car on a car-like picar-data folder (the twin, tools/twin.py; one clean run of three)
   requirements    tools/requirements_report.py: every requirement checked "auto" needs a passing test (project/generated/REQUIREMENTS.md)
 Usage: python tools/run_tests.py        exit code 0 = all passed'''
 import os
@@ -41,6 +41,7 @@ def main():
     if os.path.exists(requirements_report.COVERAGE_FILE):
         os.remove(requirements_report.COVERAGE_FILE)  # evidence of this run only
     evidence = {requirements.COVERAGE_ENV: requirements_report.COVERAGE_FILE, 'PICAR_REQUIREMENTS_CATALOG': requirements_report.CATALOG_FILE}
+    os.environ.update(evidence)     # the simulation tests show requirements too
     results = [run_unit_tests(feature_builder.SIM_PYTHON, 'tests', evidence),
                run_unit_tests(pc_settings.VOICE_PYTHON, os.path.join('tests', 'pc'), dict(evidence, CLAUDE_VOICE_MODEL='echo',
                                                                                          PICAR_WISHES_DIR=tempfile.mkdtemp(prefix='picar_wishes_'))),

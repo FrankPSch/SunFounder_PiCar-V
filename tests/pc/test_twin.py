@@ -45,6 +45,15 @@ class TwinFolders(unittest.TestCase):
         self.assertEqual((result.returncode, car.commands), (255, ['rm -rf /']))
 
 
+class SimTestsWaitForConditions(unittest.TestCase):
+    def test_no_bare_sleep_in_the_simulation_tests(self):
+        '''A sleep before a check is a timing guess that fails on a busy PC: wait_until / let_run / samples instead.'''
+        folder = os.path.join(pc_settings.REPO, 'tests', 'sim')
+        sleeping = [name for name in sorted(os.listdir(folder)) if name.startswith('test_') and name.endswith('.py')
+                    and 'sleep(' in open(os.path.join(folder, name), encoding='utf-8').read()]
+        self.assertEqual(sleeping, [])
+
+
 class AfterDeployOnTheTwin(unittest.TestCase):
     '''release.after_deploy without the documents: every SSH call and the car's web state come from the twin.'''
     def setUp(self):
